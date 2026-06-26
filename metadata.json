@@ -1,0 +1,6 @@
+{
+  "name": "CucianKu",
+  "description": "Smart Laundry Management System - POS modern, kelola kasir, outlet, pelanggan, analisa keuangan, diskon, and integrasi WhatsApp.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
