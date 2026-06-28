@@ -13,9 +13,12 @@ import com.example.data.model.*
         Outlet::class,
         Customer::class,
         Order::class,
-        CashMutation::class
+        CashMutation::class,
+        Expense::class,
+        Service::class,
+        ServicePrice::class
     ],
-    version = 3,
+    version = 7,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {

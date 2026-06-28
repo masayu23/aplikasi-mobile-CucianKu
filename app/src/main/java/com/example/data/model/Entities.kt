@@ -45,7 +45,9 @@ data class Customer(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,
     val name: String,
     val phone: String, // No WA
-    val isInactive: Boolean = false
+    val address: String = "",
+    val isInactive: Boolean = false,
+    val registrationTimestamp: Long = System.currentTimeMillis()
 )
 
 @Entity(tableName = "orders")
@@ -75,3 +77,29 @@ data class CashMutation(
     val notes: String,
     val timestamp: Long = System.currentTimeMillis()
 )
+
+@Entity(tableName = "expenses")
+data class Expense(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val outletName: String,
+    val type: String, // Gaji, Operasional, Sewa, Lainnya
+    val amount: Double,
+    val dateMillis: Long,
+    val notes: String = ""
+)
+
+@Entity(tableName = "services")
+data class Service(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val name: String,
+    val category: String // Kiloan, Satuan, Meteran
+)
+
+@Entity(tableName = "service_prices")
+data class ServicePrice(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val serviceId: Int,
+    val name: String, // Reguler, Express
+    val price: Double
+)
+

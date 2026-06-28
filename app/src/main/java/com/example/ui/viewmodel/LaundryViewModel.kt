@@ -75,9 +75,10 @@ class LaundryViewModel(application: Application) : AndroidViewModel(application)
     var activeShift = MutableStateFlow<String>("Pagi")
 
     // Admin state
-    var adminSelectedTab = MutableStateFlow(0) // 0 = Beranda, 1 = Laporan, 2 = Pengaturan
+    var adminSelectedTab = MutableStateFlow(0) // 0 = Beranda, 1 = Laporan, 2 = Pengeluaran, 3 = Pengaturan
     var adminSelectedOutlet = MutableStateFlow("Semua Outlet")
     val adminPasswordState = MutableStateFlow("admin123")
+    val adminUsernameState = MutableStateFlow("admin")
 
     // Database flows
     val settingsState = repository.settingsFlow.stateIn(
@@ -116,6 +117,20 @@ class LaundryViewModel(application: Application) : AndroidViewModel(application)
         initialValue = emptyList()
     )
 
+    val expensesState = repository.expensesFlow.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = emptyList()
+    )
+
+    val servicesState = repository.servicesFlow.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = emptyList()
+    )
+
+    fun getServicePricesFlow(serviceId: Int) = repository.getServicePricesFlow(serviceId)
+
     // Temp WA notification message to trigger UI Toast / Overlay
     var pendingWaNotification = MutableStateFlow<String?>(null)
 
@@ -129,6 +144,44 @@ class LaundryViewModel(application: Application) : AndroidViewModel(application)
     fun updateSettings(settings: AppSettings) {
         viewModelScope.launch(Dispatchers.IO) {
             repository.saveSettings(settings)
+        }
+    }
+
+    // Service Actions
+    fun addService(name: String, category: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.insertService(Service(0, name, category))
+        }
+    }
+    
+    fun updateService(service: Service) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.updateService(service)
+        }
+    }
+    
+    fun deleteService(service: Service) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.deleteService(service)
+        }
+    }
+
+    // Service Price Actions
+    fun addServicePrice(serviceId: Int, name: String, price: Double) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.insertServicePrice(ServicePrice(0, serviceId, name, price))
+        }
+    }
+
+    fun updateServicePrice(servicePrice: ServicePrice) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.updateServicePrice(servicePrice)
+        }
+    }
+
+    fun deleteServicePrice(servicePrice: ServicePrice) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.deleteServicePrice(servicePrice)
         }
     }
 
@@ -167,9 +220,9 @@ class LaundryViewModel(application: Application) : AndroidViewModel(application)
     }
 
     // Customer Actions
-    fun addCustomer(name: String, phone: String) {
+    fun addCustomer(name: String, phone: String, address: String) {
         viewModelScope.launch(Dispatchers.IO) {
-            repository.insertCustomer(Customer(0, name, phone, false))
+            repository.insertCustomer(Customer(0, name, phone, address, false))
         }
     }
 
@@ -203,7 +256,7 @@ class LaundryViewModel(application: Application) : AndroidViewModel(application)
             val existingCustomers = customersState.value
             val match = existingCustomers.find { it.phone == customerPhone || it.name.equals(customerName, true) }
             if (match == null) {
-                repository.insertCustomer(Customer(0, customerName, customerPhone, false))
+                repository.insertCustomer(Customer(name = customerName, phone = customerPhone, address = "", isInactive = false))
             } else if (match.isInactive) {
                 repository.updateCustomer(match.copy(isInactive = false))
             }
@@ -258,11 +311,11 @@ class LaundryViewModel(application: Application) : AndroidViewModel(application)
             
             // Generate distinct mock customers
             val mockCustomers = listOf(
-                Customer(0, "Pratama Yoga", "081122233344", false),
-                Customer(0, "Amalia Putri", "081223344556", false),
-                Customer(0, "Suryadi Wibowo", "081334455667", false),
-                Customer(0, "Diana Lestari", "081445566778", false),
-                Customer(0, "Kevin Sanjaya", "081556677889", false)
+                Customer(0, "Pratama Yoga", "081122233344", "Jl. Diponegoro No. 12", false, todayMs - 1 * 24 * 60 * 60 * 1000L),
+                Customer(0, "Amalia Putri", "081223344556", "Jl. Hasanuddin No. 34", false, todayMs - 8 * 24 * 60 * 60 * 1000L),
+                Customer(0, "Suryadi Wibowo", "081334455667", "Jl. Gajah Mada No. 56", false, todayMs - 12 * 24 * 60 * 60 * 1000L),
+                Customer(0, "Diana Lestari", "081445566778", "Jl. Sisingamangaraja No. 78", false, todayMs - 22 * 24 * 60 * 60 * 1000L),
+                Customer(0, "Kevin Sanjaya", "081556677889", "Jl. Jenderal Sudirman No. 90", false, todayMs - 35 * 24 * 60 * 60 * 1000L)
             )
             mockCustomers.forEach { repository.insertCustomer(it) }
 
@@ -411,10 +464,23 @@ class LaundryViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    private fun isToday(timestamp: Long): Boolean {
+    fun isToday(timestamp: Long): Boolean {
         val today = Calendar.getInstance()
         val date = Calendar.getInstance().apply { timeInMillis = timestamp }
         return today.get(Calendar.YEAR) == date.get(Calendar.YEAR) &&
                 today.get(Calendar.DAY_OF_YEAR) == date.get(Calendar.DAY_OF_YEAR)
+    }
+
+    // Expense operations
+    fun addExpense(outletName: String, type: String, amount: Double, dateMillis: Long, notes: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.insertExpense(Expense(0, outletName, type, amount, dateMillis, notes))
+        }
+    }
+
+    fun deleteExpense(expense: Expense) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.deleteExpense(expense)
+        }
     }
 }

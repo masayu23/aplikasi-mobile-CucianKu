@@ -14,11 +14,39 @@ class LaundryRepository(private val laundryDao: LaundryDao) {
     val customersFlow: Flow<List<Customer>> = laundryDao.getCustomersFlow()
     val ordersFlow: Flow<List<Order>> = laundryDao.getOrdersFlow()
     val cashMutationsFlow: Flow<List<CashMutation>> = laundryDao.getCashMutationsFlow()
+    val expensesFlow: Flow<List<Expense>> = laundryDao.getExpensesFlow()
+    val servicesFlow: Flow<List<Service>> = laundryDao.getServicesFlow()
+
+    fun getServicePricesFlow(serviceId: Int): Flow<List<ServicePrice>> = laundryDao.getServicePricesFlow(serviceId)
 
     suspend fun getSettingsDirect(): AppSettings? = laundryDao.getSettingsDirect()
 
     suspend fun saveSettings(settings: AppSettings) {
         laundryDao.insertSettings(settings)
+    }
+
+    suspend fun insertService(service: Service): Long {
+        return laundryDao.insertService(service)
+    }
+
+    suspend fun updateService(service: Service) {
+        laundryDao.updateService(service)
+    }
+
+    suspend fun deleteService(service: Service) {
+        laundryDao.deleteService(service)
+    }
+
+    suspend fun insertServicePrice(servicePrice: ServicePrice) {
+        laundryDao.insertServicePrice(servicePrice)
+    }
+
+    suspend fun updateServicePrice(servicePrice: ServicePrice) {
+        laundryDao.updateServicePrice(servicePrice)
+    }
+
+    suspend fun deleteServicePrice(servicePrice: ServicePrice) {
+        laundryDao.deleteServicePrice(servicePrice)
     }
 
     suspend fun insertCashier(cashier: Cashier) {
@@ -65,6 +93,14 @@ class LaundryRepository(private val laundryDao: LaundryDao) {
         laundryDao.insertCashMutation(mutation)
     }
 
+    suspend fun insertExpense(expense: Expense) {
+        laundryDao.insertExpense(expense)
+    }
+
+    suspend fun deleteExpense(expense: Expense) {
+        laundryDao.deleteExpense(expense)
+    }
+
     // Generate automatically: KSR001, KSR002 etc.
     suspend fun generateNextCashierId(): String {
         val list = cashiersFlow.firstOrNull() ?: emptyList()
@@ -105,10 +141,11 @@ class LaundryRepository(private val laundryDao: LaundryDao) {
         // Check customers
         val currentCustomers = customersFlow.firstOrNull() ?: emptyList()
         if (currentCustomers.isEmpty()) {
-            laundryDao.insertCustomer(Customer(0, "Rian Prasetia", "081234567890", false))
-            laundryDao.insertCustomer(Customer(0, "Dewi Lestari", "085712345678", false))
-            laundryDao.insertCustomer(Customer(0, "Andi Wijaya", "081987654321", false))
-            laundryDao.insertCustomer(Customer(0, "Lina Marlina", "082111223344", true)) // Inactive customer
+            val now = System.currentTimeMillis()
+            laundryDao.insertCustomer(Customer(0, "Rian Prasetia", "081234567890", "Jl. Merdeka No. 5", false, now - 2 * 24 * 60 * 60 * 1000L)) // 2 days ago
+            laundryDao.insertCustomer(Customer(0, "Dewi Lestari", "085712345678", "Jl. Mawar No. 12", false, now - 15 * 24 * 60 * 60 * 1000L)) // 15 days ago
+            laundryDao.insertCustomer(Customer(0, "Andi Wijaya", "081987654321", "Jl. Melati No. 8", false, now - 40 * 24 * 60 * 60 * 1000L)) // 40 days ago
+            laundryDao.insertCustomer(Customer(0, "Lina Marlina", "082111223344", "Jl. Flamboyan No. 3", true, now - 50 * 24 * 60 * 60 * 1000L)) // 50 days ago
         }
 
         // Check orders
@@ -248,6 +285,27 @@ class LaundryRepository(private val laundryDao: LaundryDao) {
             laundryDao.insertCashMutation(
                 CashMutation(0, "Budi Santoso", "Pengeluaran operasional", 15000.0, "Beli Deterjen Tambahan", cal.timeInMillis)
             )
+        }
+
+        // Check expenses
+        val currentExpenses = expensesFlow.firstOrNull() ?: emptyList()
+        if (currentExpenses.isEmpty()) {
+            val cal = Calendar.getInstance()
+            laundryDao.insertExpense(Expense(0, "CucianKu Pusat", "Gaji", 2500000.0, cal.timeInMillis - 5 * 24 * 60 * 60 * 1000L, "Gaji Bulanan Staff"))
+            laundryDao.insertExpense(Expense(0, "CucianKu Pusat", "Operasional", 75000.0, cal.timeInMillis - 2 * 24 * 60 * 60 * 1000L, "Beli Deterjen & Pewangi"))
+            laundryDao.insertExpense(Expense(0, "CucianKu Sudirman", "Sewa", 1200000.0, cal.timeInMillis - 10 * 24 * 60 * 60 * 1000L, "Sewa Toko Bulanan"))
+            laundryDao.insertExpense(Expense(0, "CucianKu Pusat", "Lainnya", 50000.0, cal.timeInMillis, "Servis Setrika Uap"))
+        }
+
+        // Check services
+        val currentServices = servicesFlow.firstOrNull() ?: emptyList()
+        if (currentServices.isEmpty()) {
+            val serviceId1 = laundryDao.insertService(Service(0, "Cuci + Setrika", "Kiloan"))
+            laundryDao.insertServicePrice(ServicePrice(0, serviceId1.toInt(), "Reguler", 7000.0))
+            laundryDao.insertServicePrice(ServicePrice(0, serviceId1.toInt(), "Express", 10000.0))
+
+            val serviceId2 = laundryDao.insertService(Service(0, "Setrika", "Satuan"))
+            // Service 2 has 0 price packages just to match the screenshot for example.
         }
     }
 }

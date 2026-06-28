@@ -71,4 +71,40 @@ interface LaundryDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertCashMutation(mutation: CashMutation)
+
+    // Expenses
+    @Query("SELECT * FROM expenses ORDER BY dateMillis DESC")
+    fun getExpensesFlow(): Flow<List<Expense>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertExpense(expense: Expense)
+
+    @Delete
+    suspend fun deleteExpense(expense: Expense)
+
+    // Services
+    @Query("SELECT * FROM services ORDER BY category ASC, name ASC")
+    fun getServicesFlow(): Flow<List<Service>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertService(service: Service): Long
+
+    @Update
+    suspend fun updateService(service: Service)
+
+    @Delete
+    suspend fun deleteService(service: Service)
+
+    // Service Prices
+    @Query("SELECT * FROM service_prices WHERE serviceId = :serviceId ORDER BY id ASC")
+    fun getServicePricesFlow(serviceId: Int): Flow<List<ServicePrice>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertServicePrice(servicePrice: ServicePrice)
+
+    @Update
+    suspend fun updateServicePrice(servicePrice: ServicePrice)
+
+    @Delete
+    suspend fun deleteServicePrice(servicePrice: ServicePrice)
 }
