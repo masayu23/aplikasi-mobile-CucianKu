@@ -57,6 +57,10 @@ class LaundryRepository(private val laundryDao: LaundryDao) {
         laundryDao.updateCashier(cashier)
     }
 
+    suspend fun deleteCashier(cashier: Cashier) {
+        laundryDao.deleteCashier(cashier)
+    }
+
     suspend fun insertOutlet(outlet: Outlet) {
         laundryDao.insertOutlet(outlet)
     }

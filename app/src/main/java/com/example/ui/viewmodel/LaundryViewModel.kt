@@ -200,6 +200,12 @@ class LaundryViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun deleteCashier(cashier: Cashier) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.deleteCashier(cashier)
+        }
+    }
+
     // Outlet Actions
     fun addOutlet(name: String, address: String) {
         viewModelScope.launch(Dispatchers.IO) {
@@ -222,7 +228,17 @@ class LaundryViewModel(application: Application) : AndroidViewModel(application)
     // Customer Actions
     fun addCustomer(name: String, phone: String, address: String) {
         viewModelScope.launch(Dispatchers.IO) {
-            repository.insertCustomer(Customer(0, name, phone, address, false))
+            val outlet = activeCashier.value?.assignedOutlet 
+                ?: (if (adminSelectedOutlet.value == "Semua Outlet") "CucianKu Pusat" else adminSelectedOutlet.value)
+            repository.insertCustomer(Customer(
+                id = 0, 
+                name = name, 
+                phone = phone, 
+                address = address, 
+                isInactive = false, 
+                registrationTimestamp = System.currentTimeMillis(),
+                registeredOutletName = outlet
+            ))
         }
     }
 

@@ -59,9 +59,11 @@ fun SmartLaundryApp(viewModel: LaundryViewModel) {
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
+        contentWindowInsets = WindowInsets(0.dp),
         topBar = {
             if (currentScreen != Screen.SPLASH && currentScreen != Screen.ROLE_SELECTION) {
                 TopAppBar(
+                    windowInsets = WindowInsets.statusBars,
                     title = {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(
@@ -141,10 +143,12 @@ fun SmartLaundryApp(viewModel: LaundryViewModel) {
             }
         }
     ) { innerPadding ->
+        val isDashboard = currentScreen == Screen.ADMIN_DASHBOARD || currentScreen == Screen.CASHIER_DASHBOARD
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
+                .then(if (!isDashboard) Modifier.navigationBarsPadding() else Modifier)
         ) {
             // Main navigation container
             Crossfade(targetState = currentScreen, label = "ScreenTransition") { screen ->
@@ -700,7 +704,7 @@ fun RoleSelectionScreen(viewModel: LaundryViewModel, initialTab: Int = 0) {
                                 expanded = cashierExpanded,
                                 onDismissRequest = { cashierExpanded = false }
                             ) {
-                                cashiers.forEach { cashier ->
+                                cashiers.filter { it.isActive }.forEach { cashier ->
                                     DropdownMenuItem(
                                         text = { Text("${cashier.cashierId} - ${cashier.name}") },
                                         onClick = {
@@ -1098,7 +1102,6 @@ fun AdminDashboardScreen(viewModel: LaundryViewModel) {
                 tonalElevation = 8.dp,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .navigationBarsPadding()
             ) {
                 val navItems = listOf(
                     Triple(0, Icons.Filled.Home, "Beranda"),
@@ -1169,6 +1172,14 @@ fun AdminHomeTab(viewModel: LaundryViewModel) {
         orders
     } else {
         orders.filter { it.outletName == adminSelectedOutlet }
+    }
+
+    // Filter customers by selected outlet
+    val customersFiltered = if (adminSelectedOutlet == "Semua Outlet") {
+        customers
+    } else {
+        val phonesWithOrders = ordersFiltered.map { it.customerPhone }.toSet()
+        customers.filter { it.registeredOutletName == adminSelectedOutlet || it.phone in phonesWithOrders }
     }
 
     // Calculate Admin stats for "Today"
@@ -1341,7 +1352,7 @@ fun AdminHomeTab(viewModel: LaundryViewModel) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     StatCard(
                         title = "Jumlah Pelanggan",
-                        value = "${customers.size} Orang",
+                        value = "${customersFiltered.size} Orang",
                         icon = Icons.Filled.Group,
                         iconContainerColor = MaterialTheme.colorScheme.secondaryContainer,
                         iconColor = MaterialTheme.colorScheme.secondary,
@@ -1540,7 +1551,7 @@ fun AdminHomeTab(viewModel: LaundryViewModel) {
                             }
                         } else {
                             // Search Customers
-                            val matchedCustomers = customers.filter {
+                            val matchedCustomers = customersFiltered.filter {
                                 it.name.contains(searchQuery, ignoreCase = true) ||
                                         it.phone.contains(searchQuery)
                             }.take(5)
@@ -2746,8 +2757,12 @@ fun AdminPengaturanAkunSubScreen(viewModel: LaundryViewModel, onBack: () -> Unit
     var passwordInput by remember { mutableStateOf(passwordState) }
     var confirmPasswordInput by remember { mutableStateOf("") }
 
-    var successMessage by remember { mutableStateOf<String?>(null) }
-    var errorMessage by remember { mutableStateOf<String?>(null) }
+    var passwordVisible by remember { mutableStateOf(false) }
+    var confirmPasswordVisible by remember { mutableStateOf(false) }
+
+    var showValidationDialog by remember { mutableStateOf(false) }
+    var dialogMessage by remember { mutableStateOf("") }
+    var dialogIsSuccess by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -2856,8 +2871,14 @@ fun AdminPengaturanAkunSubScreen(viewModel: LaundryViewModel, onBack: () -> Unit
                     value = passwordInput,
                     onValueChange = { passwordInput = it },
                     placeholder = { Text("Masukkan kata sandi baru (min 5 karakter)") },
-                    visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                    visualTransformation = if (passwordVisible) androidx.compose.ui.text.input.VisualTransformation.None else androidx.compose.ui.text.input.PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    trailingIcon = {
+                        val image = if (passwordVisible) Icons.Filled.Visibility else Icons.Filled.VisibilityOff
+                        IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                            Icon(imageVector = image, contentDescription = "Toggle password visibility")
+                        }
+                    },
                     singleLine = true,
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth().testTag("akun_password_input")
@@ -2876,66 +2897,41 @@ fun AdminPengaturanAkunSubScreen(viewModel: LaundryViewModel, onBack: () -> Unit
                     value = confirmPasswordInput,
                     onValueChange = { confirmPasswordInput = it },
                     placeholder = { Text("Ulangi kata sandi baru") },
-                    visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                    visualTransformation = if (confirmPasswordVisible) androidx.compose.ui.text.input.VisualTransformation.None else androidx.compose.ui.text.input.PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    trailingIcon = {
+                        val image = if (confirmPasswordVisible) Icons.Filled.Visibility else Icons.Filled.VisibilityOff
+                        IconButton(onClick = { confirmPasswordVisible = !confirmPasswordVisible }) {
+                            Icon(imageVector = image, contentDescription = "Toggle confirm password visibility")
+                        }
+                    },
                     singleLine = true,
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth().testTag("akun_confirm_password_input")
                 )
             }
 
-            if (errorMessage != null) {
-                item {
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.error)
-                    ) {
-                        Text(
-                            text = errorMessage ?: "",
-                            color = MaterialTheme.colorScheme.onErrorContainer,
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(16.dp)
-                        )
-                    }
-                }
-            }
-
-            if (successMessage != null) {
-                item {
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(containerColor = Color(0xFFE8F5E9)),
-                        border = BorderStroke(1.dp, Color(0xFF2E7D32))
-                    ) {
-                        Text(
-                            text = successMessage ?: "",
-                            color = Color(0xFF1B5E20),
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(16.dp)
-                        )
-                    }
-                }
-            }
-
             item {
                 Button(
                     onClick = {
-                        successMessage = null
-                        errorMessage = null
-                        
                         if (usernameInput.trim().isEmpty()) {
-                            errorMessage = "Username tidak boleh kosong."
+                            dialogMessage = "Username tidak boleh kosong."
+                            dialogIsSuccess = false
+                            showValidationDialog = true
                         } else if (passwordInput.length < 5) {
-                            errorMessage = "Kata sandi baru minimal harus 5 karakter."
+                            dialogMessage = "Kata sandi baru minimal harus 5 karakter."
+                            dialogIsSuccess = false
+                            showValidationDialog = true
                         } else if (confirmPasswordInput.isNotEmpty() && passwordInput != confirmPasswordInput) {
-                            errorMessage = "Konfirmasi kata sandi tidak cocok."
+                            dialogMessage = "Konfirmasi kata sandi tidak cocok."
+                            dialogIsSuccess = false
+                            showValidationDialog = true
                         } else {
                             viewModel.adminUsernameState.value = usernameInput.trim()
                             viewModel.adminPasswordState.value = passwordInput
-                            successMessage = "Kredensial akun Owner berhasil diperbarui!"
+                            dialogMessage = "Kredensial akun Owner berhasil diperbarui!"
+                            dialogIsSuccess = true
+                            showValidationDialog = true
                             confirmPasswordInput = ""
                         }
                     },
@@ -2948,6 +2944,26 @@ fun AdminPengaturanAkunSubScreen(viewModel: LaundryViewModel, onBack: () -> Unit
                     Text("Simpan Perubahan", fontWeight = FontWeight.Bold)
                 }
             }
+        }
+        
+        if (showValidationDialog) {
+            AlertDialog(
+                onDismissRequest = { showValidationDialog = false },
+                title = { Text(if (dialogIsSuccess) "Berhasil" else "Peringatan", fontWeight = FontWeight.Bold) },
+                text = { Text(dialogMessage) },
+                confirmButton = {
+                    TextButton(onClick = { showValidationDialog = false }) {
+                        Text("Tutup", fontWeight = FontWeight.Bold)
+                    }
+                },
+                icon = {
+                    Icon(
+                        imageVector = if (dialogIsSuccess) Icons.Filled.CheckCircle else Icons.Filled.Error,
+                        contentDescription = null,
+                        tint = if (dialogIsSuccess) Color(0xFF2E7D32) else MaterialTheme.colorScheme.error
+                    )
+                }
+            )
         }
     }
 }
@@ -3358,6 +3374,7 @@ fun AdminPengaturanHargaSubScreen(viewModel: LaundryViewModel, service: Service,
     
     // For navigation within prices (to edit price)
     var selectedPriceToEdit by remember { mutableStateOf<ServicePrice?>(null) }
+    var isAddingPrice by remember { mutableStateOf(false) }
     
     if (selectedPriceToEdit != null) {
         AdminUbahHargaSubScreen(
@@ -3365,6 +3382,15 @@ fun AdminPengaturanHargaSubScreen(viewModel: LaundryViewModel, service: Service,
             service = service, 
             price = selectedPriceToEdit!!,
             onBack = { selectedPriceToEdit = null }
+        )
+        return
+    }
+
+    if (isAddingPrice) {
+        AdminTambahHargaSubScreen(
+            viewModel = viewModel,
+            service = service,
+            onBack = { isAddingPrice = false }
         )
         return
     }
@@ -3397,15 +3423,39 @@ fun AdminPengaturanHargaSubScreen(viewModel: LaundryViewModel, service: Service,
             )
         }
         
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .weight(1f),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            items(prices) { price ->
-                Card(
+        if (prices.isEmpty()) {
+            Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(
+                        imageVector = Icons.Filled.Info,
+                        contentDescription = null,
+                        tint = Color.Gray,
+                        modifier = Modifier.size(48.dp)
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Belum ada harga untuk layanan ini",
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.Gray
+                    )
+                    Text(
+                        text = "Silakan klik tombol tambah di bawah",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.Gray
+                    )
+                }
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .weight(1f),
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                items(prices) { price ->
+                    Card(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(16.dp),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -3463,10 +3513,11 @@ fun AdminPengaturanHargaSubScreen(viewModel: LaundryViewModel, service: Service,
                 }
             }
         }
+        }
         
         // Add Button
         Button(
-            onClick = { /* Add Price Dialog */ },
+            onClick = { isAddingPrice = true },
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(16.dp)
@@ -3474,6 +3525,150 @@ fun AdminPengaturanHargaSubScreen(viewModel: LaundryViewModel, service: Service,
             shape = RoundedCornerShape(12.dp)
         ) {
             Text("TAMBAH HARGA", fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AdminTambahHargaSubScreen(viewModel: LaundryViewModel, service: Service, onBack: () -> Unit) {
+    var nameInput by remember { mutableStateOf("") }
+    var priceInput by remember { mutableStateOf("") }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+    ) {
+        // Header
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onBack, modifier = Modifier.testTag("tambah_harga_back_button")) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "Kembali",
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            }
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = "Tambah Harga",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.ExtraBold,
+                color = MaterialTheme.colorScheme.primary
+            )
+        }
+
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .weight(1f)
+                .padding(16.dp)
+        ) {
+            // Service Info
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+            ) {
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(48.dp)
+                            .background(Color(0xFFE65100), shape = CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = service.name.take(1).uppercase(),
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Text(text = "Layanan", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(text = service.name, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            Text("Nama Harga", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedTextField(
+                value = nameInput,
+                onValueChange = { nameInput = it },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                singleLine = true,
+                placeholder = { Text("Misal: Reguler, Kilat, dll") },
+                colors = OutlinedTextFieldDefaults.colors(
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                    focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                    unfocusedBorderColor = Color.Transparent,
+                    focusedBorderColor = Color.Transparent
+                )
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Text("Harga", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedTextField(
+                value = priceInput,
+                onValueChange = { 
+                    if (it.isEmpty() || it.all { char -> char.isDigit() }) {
+                        priceInput = it 
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                singleLine = true,
+                placeholder = { Text("Misal: 7000") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                leadingIcon = { Text("Rp", fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 12.dp)) },
+                colors = OutlinedTextFieldDefaults.colors(
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                    focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                    unfocusedBorderColor = Color.Transparent,
+                    focusedBorderColor = Color.Transparent
+                )
+            )
+            val parsedPrice = priceInput.toDoubleOrNull() ?: 0.0
+            if (parsedPrice > 0) {
+                Text(
+                    text = "Terbaca: Rp ${String.format("%,.0f", parsedPrice).replace(",", ".")}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.Gray,
+                    modifier = Modifier.padding(top = 4.dp, start = 4.dp)
+                )
+            }
+        }
+        
+        Button(
+            onClick = { 
+                val parsedPrice = priceInput.toDoubleOrNull() ?: 0.0
+                if (nameInput.isNotBlank() && parsedPrice >= 0) {
+                    viewModel.addServicePrice(service.id, nameInput, parsedPrice)
+                    onBack()
+                }
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+                .height(50.dp),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Text("Simpan Harga", fontWeight = FontWeight.Bold)
         }
     }
 }
@@ -4886,7 +5081,12 @@ fun KelolaKasirScreen(viewModel: LaundryViewModel) {
                                 isActiveInput = cashier.isActive
                                 selectedOutletName = cashier.assignedOutlet
                             }) {
-                                Icon(imageVector = Icons.Filled.Edit, contentDescription = "Edit")
+                                Icon(imageVector = Icons.Filled.Edit, contentDescription = "Edit", tint = MaterialTheme.colorScheme.primary)
+                            }
+                            IconButton(onClick = {
+                                viewModel.deleteCashier(cashier)
+                            }) {
+                                Icon(imageVector = Icons.Filled.Delete, contentDescription = "Delete", tint = MaterialTheme.colorScheme.error)
                             }
                         }
                     }
@@ -5352,6 +5552,14 @@ fun AnalisaPelangganScreen(viewModel: LaundryViewModel) {
         orders.filter { it.outletName == selectedOutlet }
     }
 
+    // Filter customers by selected outlet (registered there, or ordered there)
+    val customersFiltered = if (selectedOutlet == "Semua Outlet") {
+        customers
+    } else {
+        val phonesWithOrders = ordersFiltered.map { it.customerPhone }.toSet()
+        customers.filter { it.registeredOutletName == selectedOutlet || it.phone in phonesWithOrders }
+    }
+
     // Date calculations
     val startOfToday = Calendar.getInstance().apply {
         set(Calendar.HOUR_OF_DAY, 0)
@@ -5392,18 +5600,18 @@ fun AnalisaPelangganScreen(viewModel: LaundryViewModel) {
 
     // --- KPI Summary Metrics ---
     // 1. Total Customers
-    val totalCustomersCount = customers.size
+    val totalCustomersCount = customersFiltered.size
 
     // 2. New Customers count (registered in A vs B)
     val newCustomersA = when (selectedPeriod) {
-        0 -> customers.filter { it.registrationTimestamp >= startOfToday }
-        1 -> customers.filter { it.registrationTimestamp >= startOfSevenDaysAgo }
-        else -> customers.filter { it.registrationTimestamp >= startOfThirtyDaysAgo }
+        0 -> customersFiltered.filter { it.registrationTimestamp >= startOfToday }
+        1 -> customersFiltered.filter { it.registrationTimestamp >= startOfSevenDaysAgo }
+        else -> customersFiltered.filter { it.registrationTimestamp >= startOfThirtyDaysAgo }
     }
     val newCustomersB = when (selectedPeriod) {
-        0 -> customers.filter { it.registrationTimestamp >= startOfYesterday && it.registrationTimestamp < startOfToday }
-        1 -> customers.filter { it.registrationTimestamp >= startOfFourteenDaysAgo && it.registrationTimestamp < startOfSevenDaysAgo }
-        else -> customers.filter { it.registrationTimestamp >= startOfSixtyDaysAgo && it.registrationTimestamp < startOfThirtyDaysAgo }
+        0 -> customersFiltered.filter { it.registrationTimestamp >= startOfYesterday && it.registrationTimestamp < startOfToday }
+        1 -> customersFiltered.filter { it.registrationTimestamp >= startOfFourteenDaysAgo && it.registrationTimestamp < startOfSevenDaysAgo }
+        else -> customersFiltered.filter { it.registrationTimestamp >= startOfSixtyDaysAgo && it.registrationTimestamp < startOfThirtyDaysAgo }
     }
 
     val newCustomersCountA = newCustomersA.size
@@ -5419,7 +5627,7 @@ fun AnalisaPelangganScreen(viewModel: LaundryViewModel) {
     val customerOrderCountMapB = ordersB.groupBy { it.customerPhone }.mapValues { it.value.size }
 
     // Tab 0: Top customers by Spend Value (Nilai Belanja Banyak)
-    val topSpendCustomers = customers.map { cust ->
+    val topSpendCustomers = customersFiltered.map { cust ->
         val totalSpent = customerSpendingMapA[cust.phone] ?: 0.0
         val spentPrev = customerSpendingMapB[cust.phone] ?: 0.0
         val diff = totalSpent - spentPrev
@@ -5427,7 +5635,7 @@ fun AnalisaPelangganScreen(viewModel: LaundryViewModel) {
     }.filter { it.second > 0.0 || it.third != 0.0 }.sortedByDescending { it.second }
 
     // Tab 1: Top customers by Order Count (Jumlah Pesanan Banyak)
-    val topCountCustomers = customers.map { cust ->
+    val topCountCustomers = customersFiltered.map { cust ->
         val count = customerOrderCountMapA[cust.phone] ?: 0
         val countPrev = customerOrderCountMapB[cust.phone] ?: 0
         val diff = count - countPrev
@@ -5435,7 +5643,7 @@ fun AnalisaPelangganScreen(viewModel: LaundryViewModel) {
     }.filter { it.second > 0 || it.third != 0 }.sortedByDescending { it.second }
 
     // Tab 2: Inactive customers (or 0 spending in A)
-    val inactiveCustomers = customers.filter { cust ->
+    val inactiveCustomers = customersFiltered.filter { cust ->
         cust.isInactive || (customerSpendingMapA[cust.phone] ?: 0.0) == 0.0
     }
 

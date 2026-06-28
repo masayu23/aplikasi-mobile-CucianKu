@@ -47,7 +47,8 @@ data class Customer(
     val phone: String, // No WA
     val address: String = "",
     val isInactive: Boolean = false,
-    val registrationTimestamp: Long = System.currentTimeMillis()
+    val registrationTimestamp: Long = System.currentTimeMillis(),
+    val registeredOutletName: String = "CucianKu Pusat"
 )
 
 @Entity(tableName = "orders")

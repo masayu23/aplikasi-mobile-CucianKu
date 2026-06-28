@@ -29,6 +29,9 @@ interface LaundryDao {
     @Update
     suspend fun updateCashier(cashier: Cashier)
 
+    @Delete
+    suspend fun deleteCashier(cashier: Cashier)
+
     // Outlets
     @Query("SELECT * FROM outlets ORDER BY name ASC")
     fun getOutletsFlow(): Flow<List<Outlet>>
