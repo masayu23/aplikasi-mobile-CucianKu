@@ -77,6 +77,7 @@ class LaundryViewModel(application: Application) : AndroidViewModel(application)
     // Admin state
     var adminSelectedTab = MutableStateFlow(0) // 0 = Beranda, 1 = Laporan, 2 = Pengaturan
     var adminSelectedOutlet = MutableStateFlow("Semua Outlet")
+    val adminPasswordState = MutableStateFlow("admin123")
 
     // Database flows
     val settingsState = repository.settingsFlow.stateIn(
@@ -117,6 +118,12 @@ class LaundryViewModel(application: Application) : AndroidViewModel(application)
 
     // Temp WA notification message to trigger UI Toast / Overlay
     var pendingWaNotification = MutableStateFlow<String?>(null)
+
+    // Track the last created order for instant receipt printing
+    val lastCreatedOrder = MutableStateFlow<Order?>(null)
+
+    // Track the order currently being viewed/printed in the receipt modal
+    val selectedReceiptOrder = MutableStateFlow<Order?>(null)
 
     // Admin Settings actions
     fun updateSettings(settings: AppSettings) {
@@ -186,7 +193,8 @@ class LaundryViewModel(application: Application) : AndroidViewModel(application)
         weightQty: Double,
         notes: String,
         discountAmount: Double,
-        paymentMethod: String
+        paymentMethod: String,
+        pricePerUnit: Double? = null
     ) {
         viewModelScope.launch(Dispatchers.IO) {
             val settings = settingsState.value ?: AppSettings()
@@ -200,15 +208,17 @@ class LaundryViewModel(application: Application) : AndroidViewModel(application)
                 repository.updateCustomer(match.copy(isInactive = false))
             }
 
-            val pricePerUnit = when (serviceType) {
+            val finalPricePerUnit = pricePerUnit ?: when (serviceType) {
                 "Kiloan" -> settings.priceKiloan
                 "Satuan" -> settings.priceSatuan
                 "Meteran" -> settings.priceMeteran
                 "Express" -> settings.priceExpress
+                "Cuci Kering" -> settings.priceCuciKering
+                "Cuci Setrika" -> settings.priceCuciSetrika
                 else -> settings.priceKiloan
             }
 
-            val totalRaw = pricePerUnit * weightQty
+            val totalRaw = finalPricePerUnit * weightQty
             val allowedDiscount = if (discountAmount > settings.maksDiskonManual) settings.maksDiskonManual else discountAmount
             val finalTotal = (totalRaw - allowedDiscount).coerceAtLeast(0.0)
 
@@ -221,7 +231,7 @@ class LaundryViewModel(application: Application) : AndroidViewModel(application)
                 serviceType,
                 weightQty,
                 notes,
-                pricePerUnit,
+                finalPricePerUnit,
                 allowedDiscount,
                 finalTotal,
                 paymentMethod,
@@ -229,7 +239,10 @@ class LaundryViewModel(application: Application) : AndroidViewModel(application)
                 System.currentTimeMillis()
             )
 
-            repository.insertOrder(newOrder)
+            val insertedId = repository.insertOrder(newOrder)
+            val savedOrder = newOrder.copy(id = insertedId.toInt())
+            lastCreatedOrder.value = savedOrder
+            selectedReceiptOrder.value = savedOrder
 
             // Auto WA Notification Simulation
             if (settings.isWaOnOrderCreated) {
@@ -333,6 +346,8 @@ class LaundryViewModel(application: Application) : AndroidViewModel(application)
             val satuanCount = ordersState.value.count { it.serviceType == "Satuan" }
             val meteranCount = ordersState.value.count { it.serviceType == "Meteran" }
             val expressCount = ordersState.value.count { it.serviceType == "Express" }
+            val cuciKeringCount = ordersState.value.count { it.serviceType == "Cuci Kering" }
+            val cuciSetrikaCount = ordersState.value.count { it.serviceType == "Cuci Setrika" }
 
             val prompt = """
                 Anda adalah Konsultan Bisnis Smart Laundry AI asisten untuk aplikasi CucianKu.
@@ -347,6 +362,8 @@ class LaundryViewModel(application: Application) : AndroidViewModel(application)
                   * Satuan: $satuanCount kali
                   * Meteran: $meteranCount kali
                   * Express: $expressCount kali
+                  * Cuci Kering: $cuciKeringCount kali
+                  * Cuci Setrika: $cuciSetrikaCount kali
 
                 Berikan analisis singkat (maksimal 150 kata) dalam Bahasa Indonesia yang sangat informatif, profesional, dan memberikan 3 strategi taktis untuk meningkatkan profitabilitas laundry atau mengaktifkan kembali pelanggan pasif! Gunakan bullet point yang bersih dan gaya bahasa yang ramah tapi berwibawa. Jangan sebutkan detail teknis kode.
             """.trimIndent()

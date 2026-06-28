@@ -17,6 +17,8 @@ data class AppSettings(
     val priceSatuan: Double = 10000.0,
     val priceMeteran: Double = 12000.0,
     val priceExpress: Double = 15000.0,
+    val priceCuciKering: Double = 7000.0,
+    val priceCuciSetrika: Double = 8500.0,
     val isWaOnOrderCreated: Boolean = true,
     val isWaOnOrderFinished: Boolean = true,
     val isWaOnOrderCancelled: Boolean = true

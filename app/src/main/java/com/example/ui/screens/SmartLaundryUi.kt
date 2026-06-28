@@ -4,7 +4,10 @@ import androidx.compose.animation.*
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -26,6 +29,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -45,6 +50,7 @@ import java.util.*
 fun SmartLaundryApp(viewModel: LaundryViewModel) {
     val currentScreen by viewModel.currentScreen.collectAsState()
     val pendingWa by viewModel.pendingWaNotification.collectAsState()
+    val selectedReceiptOrder by viewModel.selectedReceiptOrder.collectAsState()
     val context = LocalContext.current
 
     val primaryColor = MaterialTheme.colorScheme.primary
@@ -252,19 +258,79 @@ fun SmartLaundryApp(viewModel: LaundryViewModel) {
 
                             Spacer(modifier = Modifier.height(24.dp))
 
-                            Button(
-                                onClick = { viewModel.clearPendingWaNotification() },
-                                colors = ButtonDefaults.buttonColors(containerColor = themeColor),
-                                shape = RoundedCornerShape(16.dp),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .testTag("wa_ok_button")
-                            ) {
-                                Text("Selesai & Tutup", color = Color.White, fontWeight = FontWeight.Bold)
+                            val parsedWa = if (isWhatsApp) {
+                                try {
+                                    val phoneStart = waMessage.indexOf('(')
+                                    val phoneEnd = waMessage.indexOf(')')
+                                    if (phoneStart != -1 && phoneEnd != -1 && phoneEnd > phoneStart) {
+                                        val phone = waMessage.substring(phoneStart + 1, phoneEnd).filter { it.isDigit() }
+                                        val messageStart = waMessage.indexOf('\n')
+                                        if (messageStart != -1) {
+                                            var msg = waMessage.substring(messageStart + 1)
+                                            if (msg.startsWith("\"") && msg.endsWith("\"")) {
+                                                msg = msg.substring(1, msg.length - 1)
+                                            }
+                                            Pair(phone, msg)
+                                        } else null
+                                    } else null
+                                } catch (e: Exception) { null }
+                            } else null
+
+                            if (parsedWa != null) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    Button(
+                                        onClick = {
+                                            var cleanPhone = parsedWa.first
+                                            if (cleanPhone.startsWith("0")) {
+                                                cleanPhone = "62" + cleanPhone.substring(1)
+                                            }
+                                            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+                                                data = android.net.Uri.parse("https://api.whatsapp.com/send?phone=${cleanPhone}&text=${android.net.Uri.encode(parsedWa.second)}")
+                                            }
+                                            try {
+                                                context.startActivity(intent)
+                                            } catch (e: Exception) {
+                                                e.printStackTrace()
+                                            }
+                                        },
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF25D366)),
+                                        shape = RoundedCornerShape(16.dp),
+                                        modifier = Modifier.weight(1.2f).testTag("wa_send_real_button")
+                                    ) {
+                                        Text("Kirim WhatsApp", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                    }
+
+                                    OutlinedButton(
+                                        onClick = { viewModel.clearPendingWaNotification() },
+                                        shape = RoundedCornerShape(16.dp),
+                                        modifier = Modifier.weight(0.8f).testTag("wa_ok_button")
+                                    ) {
+                                        Text("Tutup", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                    }
+                                }
+                            } else {
+                                Button(
+                                    onClick = { viewModel.clearPendingWaNotification() },
+                                    colors = ButtonDefaults.buttonColors(containerColor = themeColor),
+                                    shape = RoundedCornerShape(16.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("wa_ok_button")
+                                ) {
+                                    Text("Selesai & Tutup", color = Color.White, fontWeight = FontWeight.Bold)
+                                }
                             }
                         }
                     }
                 }
+            }
+
+            // Receipt Dialog Overlay (Simulated Thermal Print receipt)
+            selectedReceiptOrder?.let { order ->
+                ReceiptDialog(order = order, viewModel = viewModel)
             }
         }
     }
@@ -341,8 +407,8 @@ fun RoleSelectionScreen(viewModel: LaundryViewModel, initialTab: Int = 0) {
     var selectedTab by remember { mutableStateOf(initialTab) } // 0 = Admin, 1 = Kasir
 
     // Admin state
-    var adminUsername by remember { mutableStateOf("admin") }
-    var adminPassword by remember { mutableStateOf("admin123") }
+    var adminUsername by remember { mutableStateOf("") }
+    var adminPassword by remember { mutableStateOf("") }
     var passwordVisible by remember { mutableStateOf(false) }
     var loginError by remember { mutableStateOf<String?>(null) }
     var showForgotDialog by remember { mutableStateOf(false) }
@@ -352,18 +418,22 @@ fun RoleSelectionScreen(viewModel: LaundryViewModel, initialTab: Int = 0) {
     var selectedOutlet by remember { mutableStateOf<Outlet?>(null) }
     var selectedShift by remember { mutableStateOf("Pagi") }
 
-    LaunchedEffect(cashiers, outlets) {
-        if (cashiers.isNotEmpty() && selectedCashier == null) {
-            selectedCashier = cashiers.firstOrNull()
-        }
-        if (outlets.isNotEmpty() && selectedOutlet == null) {
-            selectedOutlet = outlets.firstOrNull()
-        }
-    }
-
     var cashierExpanded by remember { mutableStateOf(false) }
     var outletExpanded by remember { mutableStateOf(false) }
     var shiftExpanded by remember { mutableStateOf(false) }
+
+    LaunchedEffect(selectedCashier, outlets) {
+        selectedCashier?.let { cashier ->
+            val matchedOutlet = outlets.find { it.name.trim().equals(cashier.assignedOutlet.trim(), ignoreCase = true) }
+            if (matchedOutlet != null) {
+                selectedOutlet = matchedOutlet
+            } else if (cashier.assignedOutlet.isNotEmpty()) {
+                selectedOutlet = Outlet(name = cashier.assignedOutlet, address = "")
+            }
+        } ?: run {
+            selectedOutlet = null
+        }
+    }
 
     Box(
         modifier = Modifier
@@ -541,13 +611,15 @@ fun RoleSelectionScreen(viewModel: LaundryViewModel, initialTab: Int = 0) {
 
                         Button(
                             onClick = {
-                                if (adminUsername == "admin" && adminPassword == "admin123") {
+                                val expectedPassword = viewModel.adminPasswordState.value
+                                if (adminUsername == "admin" && adminPassword == expectedPassword) {
                                     viewModel.selectedRole.value = "Admin"
                                     viewModel.navigateTo(Screen.ADMIN_DASHBOARD)
+                                    loginError = null
                                 } else if (adminUsername.isEmpty() || adminPassword.isEmpty()) {
                                     loginError = "Username dan kata sandi tidak boleh kosong."
                                 } else {
-                                    loginError = "Username atau kata sandi salah. Gunakan default: admin / admin123"
+                                    loginError = "Username atau kata sandi salah."
                                 }
                             },
                             modifier = Modifier
@@ -561,16 +633,34 @@ fun RoleSelectionScreen(viewModel: LaundryViewModel, initialTab: Int = 0) {
 
                         Spacer(modifier = Modifier.height(12.dp))
 
-                        TextButton(
-                            onClick = { showForgotDialog = true },
-                            modifier = Modifier.testTag("forgot_password_button")
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                text = "Lupa Kata Sandi?",
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.primary
-                            )
+                            // Demo login info helper to prevent lockouts
+                            var showHelp by remember { mutableStateOf(false) }
+                            Box(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = if (showHelp) "Akun: admin / ${viewModel.adminPasswordState.value}" else "Bantuan Akun?",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier
+                                        .clickable { showHelp = !showHelp }
+                                        .padding(4.dp)
+                                )
+                            }
+                            TextButton(
+                                onClick = { showForgotDialog = true },
+                                modifier = Modifier.testTag("forgot_password_button")
+                            ) {
+                                Text(
+                                    text = "Lupa Kata Sandi?",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
                         }
 
                     } else {
@@ -657,38 +747,35 @@ fun RoleSelectionScreen(viewModel: LaundryViewModel, initialTab: Int = 0) {
 
                         Spacer(modifier = Modifier.height(12.dp))
 
-                        // Dropdown Outlet
-                        ExposedDropdownMenuBox(
-                            expanded = outletExpanded,
-                            onExpandedChange = { outletExpanded = !outletExpanded }
-                        ) {
-                            OutlinedTextField(
-                                value = selectedOutlet?.name ?: "Pilih Outlet",
-                                onValueChange = {},
-                                readOnly = true,
-                                label = { Text("Lokasi Outlet") },
-                                leadingIcon = { Icon(Icons.Filled.Storefront, contentDescription = null) },
-                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = outletExpanded) },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .menuAnchor()
-                                    .testTag("outlet_select"),
-                                shape = RoundedCornerShape(12.dp)
+                        // Lokasi Outlet (Otomatis berdasarkan Kasir, tidak bisa dipilih manual)
+                        OutlinedTextField(
+                            value = selectedOutlet?.name ?: "Pilih Kasir Terlebih Dahulu",
+                            onValueChange = {},
+                            readOnly = true,
+                            enabled = false,
+                            label = { Text("Lokasi Outlet") },
+                            leadingIcon = { Icon(Icons.Filled.Storefront, contentDescription = null) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("outlet_select"),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                disabledTextColor = MaterialTheme.colorScheme.onSurface,
+                                disabledBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
+                                disabledLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                disabledLeadingIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
                             )
-                            ExposedDropdownMenu(
-                                expanded = outletExpanded,
-                                onDismissRequest = { outletExpanded = false }
-                            ) {
-                                outlets.forEach { outlet ->
-                                    DropdownMenuItem(
-                                        text = { Text(outlet.name) },
-                                        onClick = {
-                                            selectedOutlet = outlet
-                                            outletExpanded = false
-                                        }
-                                    )
-                                }
-                            }
+                        )
+
+                        if (loginError != null) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = loginError ?: "",
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.align(Alignment.Start)
+                            )
                         }
 
                         Spacer(modifier = Modifier.height(20.dp))
@@ -701,6 +788,9 @@ fun RoleSelectionScreen(viewModel: LaundryViewModel, initialTab: Int = 0) {
                                     viewModel.activeOutlet.value = selectedOutlet
                                     viewModel.activeShift.value = selectedShift
                                     viewModel.navigateTo(Screen.CASHIER_DASHBOARD)
+                                    loginError = null
+                                } else {
+                                    loginError = "Harap lengkapi pilihan Kasir dan Outlet Anda."
                                 }
                             },
                             modifier = Modifier
@@ -717,33 +807,134 @@ fun RoleSelectionScreen(viewModel: LaundryViewModel, initialTab: Int = 0) {
         }
     }
 
-    // Forgot Password Alert Dialog
+    // Forgot Password Alert Dialog (Interactive Reset Flow)
     if (showForgotDialog) {
+        var recoveryUsername by remember { mutableStateOf("") }
+        var recoveryPin by remember { mutableStateOf("") }
+        var newSecretPassword by remember { mutableStateOf("") }
+        var resetError by remember { mutableStateOf<String?>(null) }
+        var resetSuccess by remember { mutableStateOf(false) }
+
         AlertDialog(
             onDismissRequest = { showForgotDialog = false },
             title = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
-                        imageVector = Icons.Filled.Info,
+                        imageVector = Icons.Filled.LockReset,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.primary
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Lupa Kata Sandi", fontWeight = FontWeight.Bold)
+                    Text("Atur Ulang Sandi Admin", fontWeight = FontWeight.Bold)
                 }
             },
             text = {
-                Text(
-                    text = "Untuk mengatur ulang atau mengganti kata sandi administrator CucianKu, silakan hubungi Pengembang Sistem atau Administrator Utama Anda di Kantor Pusat.\n\nAkun demo default:\nUsername: admin\nPassword: admin123",
-                    style = MaterialTheme.typography.bodyMedium
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    if (!resetSuccess) {
+                        Text(
+                            text = "Masukkan detail akun Admin dan PIN Pemulihan Default (1234) untuk menyetel kata sandi baru.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        OutlinedTextField(
+                            value = recoveryUsername,
+                            onValueChange = { recoveryUsername = it },
+                            label = { Text("Username Admin") },
+                            placeholder = { Text("Contoh: admin") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        OutlinedTextField(
+                            value = recoveryPin,
+                            onValueChange = { recoveryPin = it },
+                            label = { Text("PIN Pemulihan") },
+                            placeholder = { Text("Default: 1234") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        OutlinedTextField(
+                            value = newSecretPassword,
+                            onValueChange = { newSecretPassword = it },
+                            label = { Text("Kata Sandi Baru") },
+                            placeholder = { Text("Minimal 5 karakter") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        if (resetError != null) {
+                            Text(
+                                text = resetError ?: "",
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    } else {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.CheckCircle,
+                                contentDescription = null,
+                                tint = Color(0xFF25D366),
+                                modifier = Modifier.size(48.dp)
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = "Atur Ulang Sandi Berhasil!",
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Silakan masuk menggunakan kata sandi baru Anda.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
+                }
             },
             confirmButton = {
-                Button(
-                    onClick = { showForgotDialog = false },
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Text("Mengerti")
+                if (!resetSuccess) {
+                    Button(
+                        onClick = {
+                            if (recoveryUsername.trim().lowercase() != "admin") {
+                                resetError = "Username harus 'admin' (Admin utama)."
+                            } else if (recoveryPin != "1234") {
+                                resetError = "PIN Pemulihan salah! Gunakan default: 1234"
+                            } else if (newSecretPassword.length < 5) {
+                                resetError = "Sandi baru minimal 5 karakter."
+                            } else {
+                                viewModel.adminPasswordState.value = newSecretPassword
+                                resetError = null
+                                resetSuccess = true
+                            }
+                        },
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Text("Simpan Sandi Baru")
+                    }
+                } else {
+                    Button(
+                        onClick = {
+                            showForgotDialog = false
+                            adminUsername = "admin"
+                            adminPassword = newSecretPassword
+                        },
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Text("Selesai & Masuk")
+                    }
+                }
+            },
+            dismissButton = {
+                if (!resetSuccess) {
+                    TextButton(onClick = { showForgotDialog = false }) {
+                        Text("Batal")
+                    }
                 }
             }
         )
@@ -763,30 +954,47 @@ fun AdminDashboardScreen(viewModel: LaundryViewModel) {
         modifier = Modifier.fillMaxSize(),
         bottomBar = {
             NavigationBar(
-                modifier = Modifier.testTag("admin_bottom_nav"),
-                containerColor = MaterialTheme.colorScheme.surfaceColorAtElevation(3.dp)
+                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.95f),
+                tonalElevation = 8.dp,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
             ) {
-                NavigationBarItem(
-                    selected = selectedTab == 0,
-                    onClick = { viewModel.adminSelectedTab.value = 0 },
-                    icon = { Icon(Icons.Filled.Home, contentDescription = "Beranda") },
-                    label = { Text("Beranda") },
-                    modifier = Modifier.testTag("nav_beranda")
+                val navItems = listOf(
+                    Triple(0, Icons.Filled.Home, "Beranda"),
+                    Triple(1, Icons.Filled.Assessment, "Laporan"),
+                    Triple(2, Icons.Filled.Settings, "Pengaturan")
                 )
-                NavigationBarItem(
-                    selected = selectedTab == 1,
-                    onClick = { viewModel.adminSelectedTab.value = 1 },
-                    icon = { Icon(Icons.Filled.Assessment, contentDescription = "Laporan") },
-                    label = { Text("Laporan") },
-                    modifier = Modifier.testTag("nav_laporan")
-                )
-                NavigationBarItem(
-                    selected = selectedTab == 2,
-                    onClick = { viewModel.adminSelectedTab.value = 2 },
-                    icon = { Icon(Icons.Filled.Settings, contentDescription = "Pengaturan") },
-                    label = { Text("Pengaturan") },
-                    modifier = Modifier.testTag("nav_pengaturan")
-                )
+                navItems.forEach { (index, icon, label) ->
+                    val isSelected = selectedTab == index
+                    NavigationBarItem(
+                        selected = isSelected,
+                        onClick = { viewModel.adminSelectedTab.value = index },
+                        icon = {
+                            Icon(
+                                imageVector = icon,
+                                contentDescription = label,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        },
+                        label = {
+                            Text(
+                                text = label,
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                            )
+                        },
+                        alwaysShowLabel = true,
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = MaterialTheme.colorScheme.primary,
+                            selectedTextColor = MaterialTheme.colorScheme.primary,
+                            indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                            unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                            unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                        ),
+                        modifier = Modifier.testTag(if (index == 0) "nav_beranda" else if (index == 1) "nav_laporan" else "nav_pengaturan")
+                    )
+                }
             }
         }
     ) { innerPadding ->
@@ -926,40 +1134,17 @@ fun AdminHomeTab(viewModel: LaundryViewModel) {
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(20.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "Halo Owner CucianKu!",
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = Color.White
-                        )
-                        // Easy data dummy filler button
-                        IconButton(
-                            onClick = { viewModel.addDummyTodayOrders() },
-                            colors = IconButtonDefaults.filledIconButtonColors(containerColor = Color.White.copy(alpha = 0.2f))
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.Add,
-                                contentDescription = "Isi Data Dummy Hari Ini",
-                                tint = Color.White
-                            )
-                        }
-                    }
                     Text(
-                        text = "Berikut ringkasan performa sistem laundry Anda secara real-time.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color.White.copy(alpha = 0.8f)
+                        text = "Halo Owner CucianKu!",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = Color.White
                     )
+                    Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "Ketuk tombol '+' di kanan atas untuk mengisi data simulasi transaksi Kiloan, Satuan & Meteran hari ini.",
-                        style = MaterialTheme.typography.bodySmall,
-                        fontSize = 10.sp,
-                        color = Color.White.copy(alpha = 0.6f),
-                        modifier = Modifier.padding(top = 4.dp)
+                        text = "Berikut ringkasan performa sistem laundry Anda secara menyeluruh.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.White.copy(alpha = 0.9f)
                     )
                 }
             }
@@ -1675,7 +1860,13 @@ fun CashierDashboardScreen(viewModel: LaundryViewModel) {
     val showStats = settings?.statistikHarianEnabled == true
 
     var selectedTab by remember { mutableStateOf(0) }
-    val nonCompletedOrders = orders.filter { it.status != "Diambil" && it.status != "Batal" }
+    var activeQueueSearchQuery by remember { mutableStateOf("") }
+    var completedSearchQuery by remember { mutableStateOf("") }
+    val nonCompletedOrders = orders.filter { 
+        it.status != "Diambil" && 
+        it.status != "Batal" && 
+        it.outletName == (activeOutlet?.name ?: "")
+    }
 
     Column(
         modifier = Modifier
@@ -1702,11 +1893,11 @@ fun CashierDashboardScreen(viewModel: LaundryViewModel) {
                             contentDescription = null,
                             modifier = Modifier.size(18.dp)
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = "Menu Pelayanan",
+                            text = "Pelayanan",
                             fontWeight = FontWeight.Bold,
-                            fontSize = 13.sp
+                            fontSize = 12.sp
                         )
                     }
                 }
@@ -1725,28 +1916,51 @@ fun CashierDashboardScreen(viewModel: LaundryViewModel) {
                             contentDescription = null,
                             modifier = Modifier.size(18.dp)
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = "Antrean Cucian",
+                            text = "Antrean",
                             fontWeight = FontWeight.Bold,
-                            fontSize = 13.sp
+                            fontSize = 12.sp
                         )
                         if (nonCompletedOrders.isNotEmpty()) {
-                            Spacer(modifier = Modifier.width(6.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
                             Box(
                                 modifier = Modifier
-                                    .size(20.dp)
+                                    .size(18.dp)
                                     .background(MaterialTheme.colorScheme.error, shape = CircleShape),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
                                     text = nonCompletedOrders.size.toString(),
                                     color = Color.White,
-                                    fontSize = 10.sp,
+                                    fontSize = 9.sp,
                                     fontWeight = FontWeight.Bold
                                 )
                             }
                         }
+                    }
+                }
+            )
+            Tab(
+                selected = selectedTab == 2,
+                onClick = { selectedTab = 2 },
+                text = {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center,
+                        modifier = Modifier.padding(vertical = 12.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.DateRange,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Selesai",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp
+                        )
                     }
                 }
             )
@@ -1881,7 +2095,13 @@ fun CashierDashboardScreen(viewModel: LaundryViewModel) {
                     }
                 }
             }
-        } else {
+        } else if (selectedTab == 1) {
+            val filteredNonCompletedOrders = nonCompletedOrders.filter { order ->
+                activeQueueSearchQuery.isEmpty() ||
+                order.customerName.contains(activeQueueSearchQuery, ignoreCase = true) ||
+                order.customerPhone.contains(activeQueueSearchQuery, ignoreCase = true)
+            }
+
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
@@ -1906,7 +2126,7 @@ fun CashierDashboardScreen(viewModel: LaundryViewModel) {
                             shape = CircleShape
                         ) {
                             Text(
-                                text = "Real-time",
+                                text = "Antrean Aktif",
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer,
@@ -1916,7 +2136,31 @@ fun CashierDashboardScreen(viewModel: LaundryViewModel) {
                     }
                 }
 
-                if (nonCompletedOrders.isEmpty()) {
+                // Search Bar for active queue
+                item {
+                    OutlinedTextField(
+                        value = activeQueueSearchQuery,
+                        onValueChange = { activeQueueSearchQuery = it },
+                        placeholder = { Text("Cari nama pelanggan atau nomor...", fontSize = 13.sp) },
+                        leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null, modifier = Modifier.size(20.dp)) },
+                        trailingIcon = {
+                            if (activeQueueSearchQuery.isNotEmpty()) {
+                                IconButton(onClick = { activeQueueSearchQuery = "" }) {
+                                    Icon(Icons.Filled.Clear, contentDescription = "Bersihkan", modifier = Modifier.size(18.dp))
+                                }
+                            }
+                        },
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedContainerColor = MaterialTheme.colorScheme.surface,
+                            unfocusedContainerColor = MaterialTheme.colorScheme.surface
+                        )
+                    )
+                }
+
+                if (filteredNonCompletedOrders.isEmpty()) {
                     item {
                         Card(
                             modifier = Modifier.fillMaxWidth(),
@@ -1938,7 +2182,7 @@ fun CashierDashboardScreen(viewModel: LaundryViewModel) {
                                 )
                                 Spacer(modifier = Modifier.height(12.dp))
                                 Text(
-                                    text = "Tidak ada cucian aktif di antrean.",
+                                    text = if (activeQueueSearchQuery.isNotEmpty()) "Pencarian tidak ditemukan." else "Tidak ada cucian aktif di antrean.",
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontWeight = FontWeight.Medium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1948,7 +2192,184 @@ fun CashierDashboardScreen(viewModel: LaundryViewModel) {
                         }
                     }
                 } else {
-                    items(nonCompletedOrders) { order ->
+                    items(filteredNonCompletedOrders) { order ->
+                        OrderQueueCard(order = order, viewModel = viewModel, settings = settings)
+                    }
+                }
+            }
+        } else {
+            // Tab 2: Riwayat Selesai (Completed with Calendar Picker)
+            var selectedDateMs by remember { mutableStateOf(System.currentTimeMillis()) }
+            val context = androidx.compose.ui.platform.LocalContext.current
+
+            val sdf = java.text.SimpleDateFormat("EEEE, dd MMMM yyyy", java.util.Locale("id", "ID"))
+            val dateStr = sdf.format(java.util.Date(selectedDateMs))
+
+            val calSelect = java.util.Calendar.getInstance().apply { timeInMillis = selectedDateMs }
+            val completedOrders = orders.filter { order ->
+                order.outletName == (activeOutlet?.name ?: "") &&
+                (order.status == "Selesai" || order.status == "Diambil") && run {
+                    val calOrder = java.util.Calendar.getInstance().apply { timeInMillis = order.timestamp }
+                    calOrder.get(java.util.Calendar.YEAR) == calSelect.get(java.util.Calendar.YEAR) &&
+                    calOrder.get(java.util.Calendar.DAY_OF_YEAR) == calSelect.get(java.util.Calendar.DAY_OF_YEAR)
+                }
+            }
+
+            val filteredCompletedOrders = completedOrders.filter { order ->
+                completedSearchQuery.isEmpty() ||
+                order.customerName.contains(completedSearchQuery, ignoreCase = true) ||
+                order.customerPhone.contains(completedSearchQuery, ignoreCase = true)
+            }
+
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .weight(1f),
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                item {
+                    Column {
+                        Text(
+                            text = "Riwayat Cucian Selesai",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "Pilih tanggal untuk melihat laundry yang sudah selesai atau diambil.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                // Calendar Button Picker
+                item {
+                    Card(
+                        onClick = {
+                            val calPick = java.util.Calendar.getInstance().apply { timeInMillis = selectedDateMs }
+                            android.app.DatePickerDialog(
+                                context,
+                                { _, year, month, dayOfMonth ->
+                                    val chosenCal = java.util.Calendar.getInstance().apply {
+                                        set(java.util.Calendar.YEAR, year)
+                                        set(java.util.Calendar.MONTH, month)
+                                        set(java.util.Calendar.DAY_OF_MONTH, dayOfMonth)
+                                    }
+                                    selectedDateMs = chosenCal.timeInMillis
+                                },
+                                calPick.get(java.util.Calendar.YEAR),
+                                calPick.get(java.util.Calendar.MONTH),
+                                calPick.get(java.util.Calendar.DAY_OF_MONTH)
+                            ).show()
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f))
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.DateRange,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column {
+                                    Text(
+                                        text = "Tanggal Terpilih",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Text(
+                                        text = dateStr,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = MaterialTheme.colorScheme.primary
+                            ) {
+                                Text(
+                                    text = "Pilih Tanggal",
+                                    color = Color.White,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Search Bar for completed orders
+                item {
+                    OutlinedTextField(
+                        value = completedSearchQuery,
+                        onValueChange = { completedSearchQuery = it },
+                        placeholder = { Text("Cari nama pelanggan atau nomor...", fontSize = 13.sp) },
+                        leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null, modifier = Modifier.size(20.dp)) },
+                        trailingIcon = {
+                            if (completedSearchQuery.isNotEmpty()) {
+                                IconButton(onClick = { completedSearchQuery = "" }) {
+                                    Icon(Icons.Filled.Clear, contentDescription = "Bersihkan", modifier = Modifier.size(18.dp))
+                                }
+                            }
+                        },
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedContainerColor = MaterialTheme.colorScheme.surface,
+                            unfocusedContainerColor = MaterialTheme.colorScheme.surface
+                        )
+                    )
+                }
+
+                if (filteredCompletedOrders.isEmpty()) {
+                    item {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f))
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 40.dp, horizontal = 16.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.CheckCircle,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f),
+                                    modifier = Modifier.size(48.dp)
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text = if (completedSearchQuery.isNotEmpty()) "Pencarian tidak ditemukan." else "Tidak ada cucian selesai pada tanggal ini.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    items(filteredCompletedOrders) { order ->
                         OrderQueueCard(order = order, viewModel = viewModel, settings = settings)
                     }
                 }
@@ -1961,6 +2382,7 @@ fun CashierDashboardScreen(viewModel: LaundryViewModel) {
 fun OrderQueueCard(order: Order, viewModel: LaundryViewModel, settings: AppSettings?) {
     val statuses = listOf("Order Masuk", "Dicuci", "Disetrika", "Packing", "Selesai", "Diambil")
     val currentIndex = statuses.indexOf(order.status)
+    var showConfirmDialog by remember { mutableStateOf(false) }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -1987,7 +2409,7 @@ fun OrderQueueCard(order: Order, viewModel: LaundryViewModel, settings: AppSetti
                     )
                 }
 
-                // Current status Pill
+                // Current status Pill (converts Order Masuk to Baru Masuk)
                 Surface(
                     color = when (order.status) {
                         "Order Masuk" -> MaterialTheme.colorScheme.primaryContainer
@@ -2000,7 +2422,7 @@ fun OrderQueueCard(order: Order, viewModel: LaundryViewModel, settings: AppSetti
                     shape = RoundedCornerShape(8.dp)
                 ) {
                     Text(
-                        text = order.status,
+                        text = if (order.status == "Order Masuk") "Baru Masuk" else order.status,
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
                         color = when (order.status) {
@@ -2048,32 +2470,116 @@ fun OrderQueueCard(order: Order, viewModel: LaundryViewModel, settings: AppSetti
                     ) {
                         Icon(imageVector = Icons.Filled.Cancel, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("Batal", fontSize = 12.sp)
+                        Text("Batal", fontSize = 11.sp)
                     }
                 }
 
-                // Step status button
-                if (currentIndex >= 0 && currentIndex < statuses.size - 1) {
-                    val nextStatus = statuses[currentIndex + 1]
+                // If currently not completed/finished
+                if (order.status != "Selesai" && order.status != "Diambil" && order.status != "Batal") {
+                    // Step status button
+                    if (currentIndex >= 0 && currentIndex < statuses.size - 2) {
+                        val nextStatus = statuses[currentIndex + 1]
+                        Button(
+                            onClick = {
+                                if (settings?.permissionBolehEdit == true) {
+                                    if (nextStatus == "Selesai") {
+                                        showConfirmDialog = true
+                                    } else {
+                                        viewModel.updateOrderStatus(order, nextStatus)
+                                    }
+                                } else {
+                                    viewModel.pendingWaNotification.value = "Akses ditolak: Anda tidak memiliki ijin (permission) dari owner untuk memperbarui status pesanan."
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                            modifier = Modifier.weight(1.2f),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Icon(imageVector = Icons.Filled.CheckCircle, contentDescription = null, modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Update: $nextStatus", fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+
+                    // Direct "Selesai" Button with protective dialog confirmation
                     Button(
                         onClick = {
                             if (settings?.permissionBolehEdit == true) {
-                                viewModel.updateOrderStatus(order, nextStatus)
+                                showConfirmDialog = true
                             } else {
                                 viewModel.pendingWaNotification.value = "Akses ditolak: Anda tidak memiliki ijin (permission) dari owner untuk memperbarui status pesanan."
                             }
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32)),
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Icon(imageVector = Icons.Filled.CheckCircle, contentDescription = null, modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Selesai", fontSize = 10.sp)
+                    }
+                } else if (order.status == "Selesai") {
+                    // Selesai can be marked as Diambil (Picked up)
+                    Button(
+                        onClick = {
+                            if (settings?.permissionBolehEdit == true) {
+                                viewModel.updateOrderStatus(order, "Diambil")
+                            } else {
+                                viewModel.pendingWaNotification.value = "Akses ditolak: Anda tidak memiliki ijin (permission) dari owner untuk mengambil pesanan."
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
                         modifier = Modifier.weight(1.5f),
                         shape = RoundedCornerShape(10.dp)
                     ) {
-                        Icon(imageVector = Icons.Filled.CheckCircle, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Icon(imageVector = Icons.Filled.LocalShipping, contentDescription = null, modifier = Modifier.size(14.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("Update: $nextStatus", fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text("Diambil", fontSize = 11.sp)
                     }
                 }
             }
         }
+    }
+
+    // Safety Warning Confirmation Dialog for Selesai
+    if (showConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showConfirmDialog = false },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Filled.Warning,
+                        contentDescription = null,
+                        tint = Color(0xFFE65100)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Konfirmasi Cucian Selesai", fontWeight = FontWeight.Bold)
+                }
+            },
+            text = {
+                Text(
+                    text = "Apakah cucian fisik atas nama \"${order.customerName}\" benar-benar sudah selesai disetrika & dipacking?\n\nPERINGATAN: Jangan klik tombol ini jika cucian fisik belum selesai!",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showConfirmDialog = false
+                        viewModel.updateOrderStatus(order, "Selesai")
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32)),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("Ya, Sudah Selesai")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showConfirmDialog = false }) {
+                    Text("Belum Selesai")
+                }
+            }
+        )
     }
 }
 
@@ -3591,7 +4097,7 @@ fun AnalisaLayananScreen(viewModel: LaundryViewModel) {
     }
 
     // Service types analysis
-    val services = listOf("Kiloan", "Satuan", "Meteran", "Express")
+    val services = listOf("Kiloan", "Satuan", "Meteran", "Express", "Cuci Kering", "Cuci Setrika")
     val totalRevenueA = ordersA.sumOf { it.finalTotal }
 
     val serviceStats = services.map { type ->
@@ -3926,6 +4432,8 @@ fun LaporanPemesananScreen(viewModel: LaundryViewModel) {
     val orders by viewModel.ordersState.collectAsState()
     val selectedOutlet by viewModel.adminSelectedOutlet.collectAsState()
     var selectedTab by remember { mutableStateOf(0) } // 0: Harian, 1: Mingguan, 2: Bulanan, 3: Tahunan
+    val context = LocalContext.current
+    var exportMessage by remember { mutableStateOf<String?>(null) }
 
     // Filter orders by selected outlet
     val ordersFiltered = if (selectedOutlet == "Semua Outlet") {
@@ -4072,6 +4580,90 @@ fun LaporanPemesananScreen(viewModel: LaundryViewModel) {
                     color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
                 )
             }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // CSV and PDF Download Buttons Row
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Button(
+                onClick = {
+                    val periodTitle = when (selectedTab) {
+                        0 -> "Hari Ini"
+                        1 -> "7 Hari Terakhir"
+                        2 -> "Bulan Ini"
+                        else -> "Tahun Ini"
+                    }
+                    val fileName = "Laporan_Keuangan_${selectedOutlet.replace(" ", "_")}_${periodTitle.replace(" ", "_")}.csv"
+                    val csvContent = generateFinancialSummaryCsv(selectedOutlet, periodTitle, totalIncome, filteredOrders)
+                    val success = saveCsvToDownloads(context, csvContent, fileName)
+                    if (success) {
+                        exportMessage = "Laporan CSV berhasil diunduh ke folder Downloads!\nNama file: $fileName"
+                    } else {
+                        exportMessage = "Gagal mengunduh CSV. Pastikan ijin folder aktif."
+                    }
+                },
+                modifier = Modifier.weight(1f).testTag("btn_export_csv"),
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Icon(imageVector = Icons.Filled.TableChart, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Ekspor CSV", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            }
+
+            Button(
+                onClick = {
+                    val periodTitle = when (selectedTab) {
+                        0 -> "Hari Ini"
+                        1 -> "7 Hari Terakhir"
+                        2 -> "Bulan Ini"
+                        else -> "Tahun Ini"
+                    }
+                    val fileName = "Laporan_Keuangan_${selectedOutlet.replace(" ", "_")}_${periodTitle.replace(" ", "_")}.pdf"
+                    
+                    val pdfHeader = "=== LAPORAN KEUANGAN CUCIANKU LAUNDRY ===\n" +
+                                   "Outlet: $selectedOutlet\n" +
+                                   "Periode: $periodTitle\n" +
+                                   "Total Pendapatan: Rp ${String.format("%,.0f", totalIncome)}\n" +
+                                   "Total Transaksi: ${filteredOrders.size} Order\n" +
+                                   "=========================================\n\n"
+                    val pdfBody = filteredOrders.joinToString("\n") { o ->
+                        "#ORD-${o.id} - ${o.customerName} (${o.serviceType}): Rp ${String.format("%,.0f", o.finalTotal)} [${o.status}]"
+                    }
+                    val fullContent = pdfHeader + pdfBody
+                    
+                    val success = savePdfToDownloads(context, fullContent, fileName)
+                    if (success) {
+                        exportMessage = "Laporan PDF berhasil diunduh ke folder Downloads!\nNama file: $fileName"
+                    } else {
+                        exportMessage = "Gagal mengunduh PDF. Pastikan ijin folder aktif."
+                    }
+                },
+                modifier = Modifier.weight(1f).testTag("btn_export_pdf"),
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Icon(imageVector = Icons.Filled.Description, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Ekspor PDF", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+
+        if (exportMessage != null) {
+            AlertDialog(
+                onDismissRequest = { exportMessage = null },
+                confirmButton = {
+                    Button(onClick = { exportMessage = null }) {
+                        Text("OK")
+                    }
+                },
+                title = { Text("Ekspor Laporan Sukses", fontWeight = FontWeight.Bold) },
+                text = { Text(exportMessage ?: "") }
+            )
         }
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -4350,6 +4942,8 @@ fun SettingKasirScreen(viewModel: LaundryViewModel) {
     var priceSatuanInput by remember { mutableStateOf("") }
     var priceMeteranInput by remember { mutableStateOf("") }
     var priceExpressInput by remember { mutableStateOf("") }
+    var priceCuciKeringInput by remember { mutableStateOf("") }
+    var priceCuciSetrikaInput by remember { mutableStateOf("") }
 
     var isWaOnOrderCreated by remember { mutableStateOf(true) }
     var isWaOnOrderFinished by remember { mutableStateOf(true) }
@@ -4368,6 +4962,8 @@ fun SettingKasirScreen(viewModel: LaundryViewModel) {
             priceSatuanInput = s.priceSatuan.toInt().toString()
             priceMeteranInput = s.priceMeteran.toInt().toString()
             priceExpressInput = s.priceExpress.toInt().toString()
+            priceCuciKeringInput = s.priceCuciKering.toInt().toString()
+            priceCuciSetrikaInput = s.priceCuciSetrika.toInt().toString()
             isWaOnOrderCreated = s.isWaOnOrderCreated
             isWaOnOrderFinished = s.isWaOnOrderFinished
             isWaOnOrderCancelled = s.isWaOnOrderCancelled
@@ -4419,6 +5015,8 @@ fun SettingKasirScreen(viewModel: LaundryViewModel) {
                     OutlinedTextField(value = priceSatuanInput, onValueChange = { priceSatuanInput = it }, label = { Text("Harga Satuan / Pcs") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
                     OutlinedTextField(value = priceMeteranInput, onValueChange = { priceMeteranInput = it }, label = { Text("Harga Meteran / Meter") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
                     OutlinedTextField(value = priceExpressInput, onValueChange = { priceExpressInput = it }, label = { Text("Harga Express") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = priceCuciKeringInput, onValueChange = { priceCuciKeringInput = it }, label = { Text("Harga Cuci Kering") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = priceCuciSetrikaInput, onValueChange = { priceCuciSetrikaInput = it }, label = { Text("Harga Cuci Setrika") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
                     OutlinedTextField(value = maksDiskonInput, onValueChange = { maksDiskonInput = it }, label = { Text("Maksimal Diskon Manual (Rp)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
                 }
             }
@@ -4439,21 +5037,23 @@ fun SettingKasirScreen(viewModel: LaundryViewModel) {
             Button(
                 onClick = {
                     val updated = AppSettings(
-                        1,
-                        statistikHarianEnabled,
-                        permissionBolehBatal,
-                        permissionBolehEdit,
-                        permissionBolehHapusPelanggan,
-                        permissionBolehLihatLaporanKas,
-                        permissionBolehLihatSaldo,
-                        maksDiskonInput.toDoubleOrNull() ?: 50000.0,
-                        priceKiloanInput.toDoubleOrNull() ?: 6000.0,
-                        priceSatuanInput.toDoubleOrNull() ?: 10000.0,
-                        priceMeteranInput.toDoubleOrNull() ?: 12000.0,
-                        priceExpressInput.toDoubleOrNull() ?: 15000.0,
-                        isWaOnOrderCreated,
-                        isWaOnOrderFinished,
-                        isWaOnOrderCancelled
+                        id = 1,
+                        statistikHarianEnabled = statistikHarianEnabled,
+                        permissionBolehBatal = permissionBolehBatal,
+                        permissionBolehEdit = permissionBolehEdit,
+                        permissionBolehHapusPelanggan = permissionBolehHapusPelanggan,
+                        permissionBolehLihatLaporanKas = permissionBolehLihatLaporanKas,
+                        permissionBolehLihatSaldo = permissionBolehLihatSaldo,
+                        maksDiskonManual = maksDiskonInput.toDoubleOrNull() ?: 50000.0,
+                        priceKiloan = priceKiloanInput.toDoubleOrNull() ?: 6000.0,
+                        priceSatuan = priceSatuanInput.toDoubleOrNull() ?: 10000.0,
+                        priceMeteran = priceMeteranInput.toDoubleOrNull() ?: 12000.0,
+                        priceExpress = priceExpressInput.toDoubleOrNull() ?: 15000.0,
+                        priceCuciKering = priceCuciKeringInput.toDoubleOrNull() ?: 7000.0,
+                        priceCuciSetrika = priceCuciSetrikaInput.toDoubleOrNull() ?: 8500.0,
+                        isWaOnOrderCreated = isWaOnOrderCreated,
+                        isWaOnOrderFinished = isWaOnOrderFinished,
+                        isWaOnOrderCancelled = isWaOnOrderCancelled
                     )
                     viewModel.updateSettings(updated)
                     viewModel.pendingWaNotification.value = "Pengaturan berhasil disimpan ke sistem!"
@@ -4490,23 +5090,44 @@ fun OrderBaruScreen(viewModel: LaundryViewModel) {
 
     var customerName by remember { mutableStateOf("") }
     var customerPhone by remember { mutableStateOf("") }
-    var serviceType by remember { mutableStateOf("Kiloan") }
+    
+    var selectedTipe by remember { mutableStateOf("Kiloan") }       // Kiloan, Satuan, Meteran
+    var selectedProses by remember { mutableStateOf("Cuci + Kering") } // Cuci + Kering, Cuci + Setrika, Setrika Saja
+    var selectedKecepatan by remember { mutableStateOf("Reguler") } // Reguler, Express
+    
+    val serviceType = "$selectedTipe - $selectedProses ($selectedKecepatan)"
+    
     var weightQty by remember { mutableStateOf("") }
     var notes by remember { mutableStateOf("") }
     var discountInput by remember { mutableStateOf("") }
     var paymentMethod by remember { mutableStateOf("Tunai") }
 
-    var serviceExpanded by remember { mutableStateOf(false) }
     var paymentExpanded by remember { mutableStateOf(false) }
 
-    // Real-time calculation
-    val basePrice = when (serviceType) {
-        "Kiloan" -> settings?.priceKiloan ?: 6000.0
-        "Satuan" -> settings?.priceSatuan ?: 10000.0
-        "Meteran" -> settings?.priceMeteran ?: 12000.0
-        "Express" -> settings?.priceExpress ?: 15000.0
-        else -> 6000.0
-    }
+    // Dynamic compound pricing logic
+    val basePrice = when (selectedTipe) {
+        "Kiloan" -> when (selectedProses) {
+            "Cuci + Kering" -> settings?.priceCuciKering ?: 7000.0
+            "Cuci + Setrika" -> settings?.priceCuciSetrika ?: 8500.0
+            else -> settings?.priceKiloan ?: 6000.0 // Setrika Saja
+        }
+        "Satuan" -> {
+            val base = settings?.priceSatuan ?: 10000.0
+            when (selectedProses) {
+                "Cuci + Kering" -> base
+                "Cuci + Setrika" -> base * 1.2
+                else -> base * 0.7 // Setrika Saja
+            }
+        }
+        else -> { // Meteran
+            val base = settings?.priceMeteran ?: 12000.0
+            when (selectedProses) {
+                "Cuci + Kering" -> base
+                "Cuci + Setrika" -> base * 1.2
+                else -> base * 0.7 // Setrika Saja
+            }
+        }
+    } + if (selectedKecepatan == "Express") 5000.0 else 0.0
 
     val qtyDouble = weightQty.toDoubleOrNull() ?: 0.0
     val totalRaw = basePrice * qtyDouble
@@ -4532,44 +5153,91 @@ fun OrderBaruScreen(viewModel: LaundryViewModel) {
         item {
             Text(text = "Detail Layanan Laundry", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
             Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) {
-                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                     
-                    // Dropdown Service Type
-                    ExposedDropdownMenuBox(
-                        expanded = serviceExpanded,
-                        onExpandedChange = { serviceExpanded = !serviceExpanded }
-                    ) {
-                        OutlinedTextField(
-                            value = serviceType,
-                            onValueChange = {},
-                            readOnly = true,
-                            label = { Text("Jenis Laundry") },
-                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = serviceExpanded) },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .menuAnchor(),
-                            shape = RoundedCornerShape(10.dp)
-                        )
-                        ExposedDropdownMenu(
-                            expanded = serviceExpanded,
-                            onDismissRequest = { serviceExpanded = false }
-                        ) {
-                            listOf("Kiloan", "Satuan", "Meteran", "Express").forEach { s ->
-                                DropdownMenuItem(
-                                    text = { Text("$s (Rp ${String.format("%,.0f", when(s){ "Kiloan" -> settings?.priceKiloan ?: 6000.0; "Satuan" -> settings?.priceSatuan ?: 10000.0; "Meteran" -> settings?.priceMeteran ?: 12000.0; else -> settings?.priceExpress ?: 15000.0 })})") },
-                                    onClick = {
-                                        serviceType = s
-                                        serviceExpanded = false
-                                    }
+                    // 1. Tipe Laundry
+                    Column {
+                        Text("1. Pilih Tipe Laundry", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                            listOf("Kiloan", "Satuan", "Meteran").forEach { tipe ->
+                                FilterChip(
+                                    selected = selectedTipe == tipe,
+                                    onClick = { selectedTipe = tipe },
+                                    label = { Text(tipe, fontWeight = FontWeight.Bold) },
+                                    modifier = Modifier.weight(1f).testTag("chip_tipe_$tipe")
                                 )
                             }
+                        }
+                    }
+
+                    // 2. Layanan Proses
+                    Column {
+                        Text("2. Pilih Layanan Proses", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                            listOf("Cuci + Kering", "Cuci + Setrika", "Setrika Saja").forEach { proses ->
+                                FilterChip(
+                                    selected = selectedProses == proses,
+                                    onClick = { selectedProses = proses },
+                                    label = { Text(proses, fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+                                    modifier = Modifier.weight(1f).testTag("chip_proses_${proses.replace(" ", "_")}")
+                                )
+                            }
+                        }
+                    }
+
+                    // 3. Kecepatan / Durasi
+                    Column {
+                        Text("3. Pilih Kecepatan", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                            listOf("Reguler", "Express").forEach { kec ->
+                                FilterChip(
+                                    selected = selectedKecepatan == kec,
+                                    onClick = { selectedKecepatan = kec },
+                                    label = { Text(kec, fontWeight = FontWeight.Bold) },
+                                    modifier = Modifier.weight(1f).testTag("chip_kec_$kec")
+                                )
+                            }
+                        }
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+                    // Text display of calculated service name & price per unit
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Pilihan Terkini:", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                            Text(
+                                text = serviceType,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text(
+                                text = "Rp ${String.format("%,.0f", basePrice)} / unit",
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                            )
                         }
                     }
 
                     OutlinedTextField(
                         value = weightQty,
                         onValueChange = { weightQty = it },
-                        label = { Text("Berat / Qty") },
+                        label = { Text("Berat / Jumlah Qty") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.fillMaxWidth().testTag("order_qty")
                     )
@@ -4577,8 +5245,9 @@ fun OrderBaruScreen(viewModel: LaundryViewModel) {
                     OutlinedTextField(
                         value = notes,
                         onValueChange = { notes = it },
-                        label = { Text("Catatan Pesanan") },
-                        modifier = Modifier.fillMaxWidth()
+                        label = { Text("Catatan Tambahan (opsional)") },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp)
                     )
                 }
             }
@@ -4665,13 +5334,14 @@ fun OrderBaruScreen(viewModel: LaundryViewModel) {
                             viewModel.pendingWaNotification.value = "Diskon ditolak! Diskon manual tidak boleh melebihi batas owner sebesar Rp ${String.format("%,.0f", maxDisc)}"
                         } else {
                             viewModel.createOrder(
-                                customerName,
-                                customerPhone,
-                                serviceType,
-                                qtyDouble,
-                                notes,
-                                discDouble,
-                                paymentMethod
+                                customerName = customerName,
+                                customerPhone = customerPhone,
+                                serviceType = serviceType,
+                                weightQty = qtyDouble,
+                                notes = notes,
+                                discountAmount = discDouble,
+                                paymentMethod = paymentMethod,
+                                pricePerUnit = basePrice
                             )
                             viewModel.navigateBack()
                         }
@@ -4759,5 +5429,512 @@ fun MutasiKasScreen(viewModel: LaundryViewModel) {
                 }
             }
         }
+    }
+}
+
+@Composable
+fun ReceiptDialog(order: Order, viewModel: LaundryViewModel) {
+    val clipboardManager = LocalClipboardManager.current
+    var isPrinting by remember { mutableStateOf(false) }
+    var printSuccess by remember { mutableStateOf(false) }
+
+    LaunchedEffect(isPrinting) {
+        if (isPrinting) {
+            delay(1500)
+            isPrinting = false
+            printSuccess = true
+            delay(2000)
+            printSuccess = false
+        }
+    }
+
+    val sdf = SimpleDateFormat("dd MMM yyyy, HH:mm", Locale("id", "ID"))
+    val formattedDate = sdf.format(Date(order.timestamp))
+
+    // Formatted Plain Text Receipt for clipboard / sharing
+    val plainTextReceipt = """
+========================================
+           CUCIANKU LAUNDRY             
+========================================
+No. Struk : #ORD-${order.id}
+Tanggal   : $formattedDate
+Outlet    : ${order.outletName}
+Kasir     : ${order.cashierName}
+----------------------------------------
+Pelanggan : ${order.customerName}
+No. HP    : ${order.customerPhone}
+----------------------------------------
+Layanan   : ${order.serviceType}
+Jumlah    : ${order.weightQty} ${if (order.serviceType == "Satuan") "Pcs" else if (order.serviceType == "Meteran") "M" else "Kg"}
+Harga/Unit: Rp ${String.format("%,.0f", order.pricePerUnit)}
+----------------------------------------
+Subtotal  : Rp ${String.format("%,.0f", order.pricePerUnit * order.weightQty)}
+Diskon    : Rp ${String.format("%,.0f", order.discountAmount)}
+----------------------------------------
+TOTAL     : Rp ${String.format("%,.0f", order.finalTotal)}
+Bayar via : ${order.paymentMethod}
+Status    : ${order.status}
+========================================
+     Terima Kasih Atas Kepercayaan Anda!
+      Cucian Bersih, Wangi, & Rapi!   
+========================================
+""".trimIndent()
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.6f))
+            .clickable(enabled = true) { /* consume clicks */ },
+        contentAlignment = Alignment.Center
+    ) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth(0.92f)
+                .fillMaxHeight(0.85f)
+                .padding(16.dp),
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            elevation = CardDefaults.cardElevation(defaultElevation = 16.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(20.dp)
+            ) {
+                // Modal Header
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Struk Pembayaran",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    IconButton(
+                        onClick = { viewModel.selectedReceiptOrder.value = null }
+                    ) {
+                        Icon(Icons.Filled.Close, contentDescription = "Tutup")
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Scrollable content area representing the paper receipt
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .background(
+                            color = Color(0xFFF9F9F9),
+                            shape = RoundedCornerShape(12.dp)
+                        )
+                        .border(
+                            width = 1.dp,
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                            shape = RoundedCornerShape(12.dp)
+                        )
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(16.dp)
+                            .verticalScroll(rememberScrollState()),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        // Thermal printer paper style top scalloped border/spacer
+                        Text(
+                            text = "- - - - - - - - - - - - - - - - - - - - - -",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.LightGray,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                        )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        Icon(
+                            imageVector = Icons.Filled.LocalLaundryService,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(36.dp)
+                        )
+
+                        Text(
+                            text = "CUCIANKU LAUNDRY",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.ExtraBold,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                            textAlign = TextAlign.Center
+                        )
+
+                        Text(
+                            text = order.outletName,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                            textAlign = TextAlign.Center
+                        )
+
+                        Text(
+                            text = "Kasir: ${order.cashierName}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                            textAlign = TextAlign.Center
+                        )
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        Text(
+                            text = "==========================================",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.Gray,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                        )
+
+                        // Meta details
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            ReceiptRow(label = "No. Struk", value = "#ORD-${order.id}")
+                            ReceiptRow(label = "Tanggal", value = formattedDate)
+                            ReceiptRow(label = "Pelanggan", value = order.customerName)
+                            ReceiptRow(label = "No. HP", value = order.customerPhone)
+                        }
+
+                        Text(
+                            text = "------------------------------------------",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.Gray,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                        )
+
+                        // Order details
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            ReceiptRow(
+                                label = "${order.serviceType} x ${order.weightQty} ${if (order.serviceType == "Satuan") "Pcs" else if (order.serviceType == "Meteran") "M" else "Kg"}",
+                                value = "Rp ${String.format("%,.0f", order.pricePerUnit * order.weightQty)}"
+                            )
+                            if (order.notes.isNotBlank()) {
+                                Text(
+                                    text = "   * Catatan: ${order.notes}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                                )
+                            }
+                        }
+
+                        Text(
+                            text = "------------------------------------------",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.Gray,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                        )
+
+                        // Pricing calculation
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            ReceiptRow(label = "Subtotal", value = "Rp ${String.format("%,.0f", order.pricePerUnit * order.weightQty)}")
+                            if (order.discountAmount > 0.0) {
+                                ReceiptRow(label = "Diskon", value = "- Rp ${String.format("%,.0f", order.discountAmount)}", valueColor = MaterialTheme.colorScheme.error)
+                            }
+                        }
+
+                        Text(
+                            text = "==========================================",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.Gray,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                        )
+
+                        // Grand total
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "TOTAL AKHIR",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                            )
+                            Text(
+                                text = "Rp ${String.format("%,.0f", order.finalTotal)}",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.ExtraBold,
+                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+
+                        ReceiptRow(label = "Metode Bayar", value = order.paymentMethod)
+                        ReceiptRow(label = "Status", value = if (order.status == "Order Masuk") "Baru Masuk" else order.status, valueColor = if (order.status == "Selesai" || order.status == "Diambil") Color(0xFF2E7D32) else MaterialTheme.colorScheme.primary)
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        Text(
+                            text = "Terima Kasih Atas Kunjungan Anda!",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                            textAlign = TextAlign.Center
+                        )
+                        Text(
+                            text = "Cucian Bersih, Rapi, & Harum",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                            textAlign = TextAlign.Center,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        Text(
+                            text = "- - - - - - - - - - - - - - - - - - - - - -",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.LightGray,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                        )
+                    }
+
+                    // Loading printing overlays
+                    if (isPrinting) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(Color.White.copy(alpha = 0.9f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+                                Spacer(modifier = Modifier.height(16.dp))
+                                Text(
+                                    text = "Sedang Mencetak...",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = "Mengirim data ke Printer Bluetooth...",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+
+                    if (printSuccess) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(Color.White.copy(alpha = 0.95f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Icon(
+                                    imageVector = Icons.Filled.CheckCircle,
+                                    contentDescription = null,
+                                    tint = Color(0xFF2E7D32),
+                                    modifier = Modifier.size(64.dp)
+                                )
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Text(
+                                    text = "Selesai Dicetak!",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF2E7D32)
+                                )
+                                Text(
+                                    text = "Struk berhasil dicetak ke printer thermal.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.padding(horizontal = 24.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Action buttons
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    // Copy / share button
+                    OutlinedButton(
+                        onClick = {
+                            clipboardManager.setText(AnnotatedString(plainTextReceipt))
+                            viewModel.pendingWaNotification.value = "Struk berhasil disalin ke clipboard! Anda bisa langsung membagikannya ke WhatsApp pelanggan."
+                        },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(Icons.Filled.ContentCopy, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Salin Struk", fontSize = 12.sp)
+                    }
+
+                    // Print action button
+                    Button(
+                        onClick = { isPrinting = true },
+                        modifier = Modifier.weight(1.2f),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(Icons.Filled.Print, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Cetak Struk", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun ReceiptRow(
+    label: String,
+    value: String,
+    valueColor: Color = MaterialTheme.colorScheme.onSurface
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.Top
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall,
+            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f)
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodySmall,
+            fontWeight = FontWeight.Bold,
+            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+            color = valueColor,
+            textAlign = TextAlign.End
+        )
+    }
+}
+
+fun generateFinancialSummaryCsv(outletName: String, periodTitle: String, totalIncome: Double, orders: List<Order>): String {
+    val sb = java.lang.StringBuilder()
+    sb.append("=== LAPORAN KEUANGAN CUCIANKU LAUNDRY ===\n")
+    sb.append("Outlet;${outletName}\n")
+    sb.append("Periode;${periodTitle}\n")
+    sb.append("Total Pendapatan;Rp ${String.format("%.0f", totalIncome)}\n")
+    sb.append("Total Transaksi;${orders.size}\n\n")
+    
+    sb.append("ID Transaksi;Tanggal;Pelanggan;No. HP;Layanan;Berat/Qty;Total Akhir;Metode Bayar;Status;Kasir\n")
+    val formatter = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault())
+    for (order in orders) {
+        sb.append("#ORD-${order.id};")
+        sb.append("${formatter.format(java.util.Date(order.timestamp))};")
+        sb.append("${order.customerName.replace(";", " ")};")
+        sb.append("${order.customerPhone};")
+        sb.append("${order.serviceType.replace(";", " ")};")
+        sb.append("${order.weightQty};")
+        sb.append("${order.finalTotal};")
+        sb.append("${order.paymentMethod};")
+        sb.append("${order.status};")
+        sb.append("${order.cashierName.replace(";", " ")}\n")
+    }
+    return sb.toString()
+}
+
+fun saveCsvToDownloads(context: android.content.Context, csvContent: String, fileName: String): Boolean {
+    return try {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            val resolver = context.contentResolver
+            val contentValues = android.content.ContentValues().apply {
+                put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "text/csv")
+                put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS)
+            }
+            val uri = resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
+            if (uri != null) {
+                resolver.openOutputStream(uri)?.use { outputStream ->
+                    outputStream.write(csvContent.toByteArray())
+                }
+                true
+            } else {
+                false
+            }
+        } else {
+            val downloadsDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+            val file = java.io.File(downloadsDir, fileName)
+            file.writeText(csvContent)
+            true
+        }
+    } catch (e: Exception) {
+        e.printStackTrace()
+        false
+    }
+}
+
+fun savePdfToDownloads(context: android.content.Context, content: String, fileName: String): Boolean {
+    return try {
+        val pdfDocument = android.graphics.pdf.PdfDocument()
+        val pageInfo = android.graphics.pdf.PdfDocument.PageInfo.Builder(595, 842, 1).create() // A4 size
+        val page = pdfDocument.startPage(pageInfo)
+        val canvas = page.canvas
+        val paint = android.graphics.Paint()
+        paint.textSize = 12f
+        paint.color = android.graphics.Color.BLACK
+        
+        var y = 40f
+        content.split("\n").forEach { line ->
+            if (y < 800f) {
+                canvas.drawText(line, 40f, y, paint)
+                y += 18f
+            }
+        }
+        
+        pdfDocument.finishPage(page)
+        
+        val result = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            val resolver = context.contentResolver
+            val contentValues = android.content.ContentValues().apply {
+                put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "application/pdf")
+                put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS)
+            }
+            val uri = resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
+            if (uri != null) {
+                resolver.openOutputStream(uri)?.use { outputStream ->
+                    pdfDocument.writeTo(outputStream)
+                }
+                true
+            } else {
+                false
+            }
+        } else {
+            val downloadsDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+            val file = java.io.File(downloadsDir, fileName)
+            java.io.FileOutputStream(file).use { out ->
+                pdfDocument.writeTo(out)
+            }
+            true
+        }
+        pdfDocument.close()
+        result
+    } catch (e: Exception) {
+        e.printStackTrace()
+        false
     }
 }
