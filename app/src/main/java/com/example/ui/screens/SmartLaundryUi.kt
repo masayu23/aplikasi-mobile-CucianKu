@@ -6961,6 +6961,9 @@ fun LaporanPemesananScreen(viewModel: LaundryViewModel) {
     var selectedTab by remember { mutableStateOf(0) } // 0: Harian, 1: Mingguan, 2: Bulanan, 3: Tahunan
     val context = LocalContext.current
     var exportMessage by remember { mutableStateOf<String?>(null) }
+    var showExportDialog by remember { mutableStateOf(false) }
+    var selectedStatusForExport by remember { mutableStateOf("Semua Status") }
+    var exportFormat by remember { mutableStateOf("PDF") } // "PDF" or "CSV"
 
     // Filter orders by selected outlet
     val ordersFiltered = if (selectedOutlet == "Semua Outlet") {
@@ -7118,20 +7121,8 @@ fun LaporanPemesananScreen(viewModel: LaundryViewModel) {
         ) {
             Button(
                 onClick = {
-                    val periodTitle = when (selectedTab) {
-                        0 -> "Hari Ini"
-                        1 -> "7 Hari Terakhir"
-                        2 -> "Bulan Ini"
-                        else -> "Tahun Ini"
-                    }
-                    val fileName = "Laporan_Keuangan_${selectedOutlet.replace(" ", "_")}_${periodTitle.replace(" ", "_")}.csv"
-                    val csvContent = generateFinancialSummaryCsv(selectedOutlet, periodTitle, totalIncome, filteredOrders)
-                    val success = saveCsvToDownloads(context, csvContent, fileName)
-                    if (success) {
-                        exportMessage = "Laporan CSV berhasil diunduh ke folder Downloads!\nNama file: $fileName"
-                    } else {
-                        exportMessage = "Gagal mengunduh CSV. Pastikan ijin folder aktif."
-                    }
+                    exportFormat = "CSV"
+                    showExportDialog = true
                 },
                 modifier = Modifier.weight(1f).testTag("btn_export_csv"),
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
@@ -7144,31 +7135,8 @@ fun LaporanPemesananScreen(viewModel: LaundryViewModel) {
 
             Button(
                 onClick = {
-                    val periodTitle = when (selectedTab) {
-                        0 -> "Hari Ini"
-                        1 -> "7 Hari Terakhir"
-                        2 -> "Bulan Ini"
-                        else -> "Tahun Ini"
-                    }
-                    val fileName = "Laporan_Keuangan_${selectedOutlet.replace(" ", "_")}_${periodTitle.replace(" ", "_")}.pdf"
-                    
-                    val pdfHeader = "=== LAPORAN KEUANGAN CUCIANKU LAUNDRY ===\n" +
-                                   "Outlet: $selectedOutlet\n" +
-                                   "Periode: $periodTitle\n" +
-                                   "Total Pendapatan: Rp ${String.format("%,.0f", totalIncome)}\n" +
-                                   "Total Transaksi: ${filteredOrders.size} Order\n" +
-                                   "=========================================\n\n"
-                    val pdfBody = filteredOrders.joinToString("\n") { o ->
-                        "#ORD-${o.id} - ${o.customerName} (${o.serviceType}): Rp ${String.format("%,.0f", o.finalTotal)} [${o.status}]"
-                    }
-                    val fullContent = pdfHeader + pdfBody
-                    
-                    val success = savePdfToDownloads(context, fullContent, fileName)
-                    if (success) {
-                        exportMessage = "Laporan PDF berhasil diunduh ke folder Downloads!\nNama file: $fileName"
-                    } else {
-                        exportMessage = "Gagal mengunduh PDF. Pastikan ijin folder aktif."
-                    }
+                    exportFormat = "PDF"
+                    showExportDialog = true
                 },
                 modifier = Modifier.weight(1f).testTag("btn_export_pdf"),
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary),
@@ -7178,6 +7146,137 @@ fun LaporanPemesananScreen(viewModel: LaundryViewModel) {
                 Spacer(modifier = Modifier.width(6.dp))
                 Text("Ekspor PDF", fontSize = 13.sp, fontWeight = FontWeight.Bold)
             }
+        }
+
+        if (showExportDialog) {
+            AlertDialog(
+                onDismissRequest = { showExportDialog = false },
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = if (exportFormat == "PDF") Icons.Filled.Description else Icons.Filled.TableChart,
+                            contentDescription = null,
+                            tint = if (exportFormat == "PDF") MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.secondary,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Ekspor Laporan ($exportFormat)", fontWeight = FontWeight.ExtraBold)
+                    }
+                },
+                text = {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text(
+                            text = "Silakan pilih status transaksi yang ingin diekspor. Laporan dan total pendapatan akan otomatis disesuaikan.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        
+                        Text(
+                            text = "Pilih Status Transaksi:",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                        
+                        val statusOptions = listOf("Semua Status", "Order Masuk", "Diambil", "Selesai", "Siap Ambil", "Batal")
+                        
+                        // Vertical column of modern radio-like items
+                        statusOptions.forEach { statusOption ->
+                            val isSelected = selectedStatusForExport == statusOption
+                            Card(
+                                onClick = { selectedStatusForExport = statusOption },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(12.dp),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.2f) else MaterialTheme.colorScheme.surface
+                                ),
+                                border = BorderStroke(
+                                    width = if (isSelected) 1.5.dp else 1.dp,
+                                    color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                                )
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    RadioButton(
+                                        selected = isSelected,
+                                        onClick = { selectedStatusForExport = statusOption }
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = statusOption,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            showExportDialog = false
+                            
+                            val periodTitle = when (selectedTab) {
+                                0 -> "Hari Ini"
+                                1 -> "7 Hari Terakhir"
+                                2 -> "Bulan Ini"
+                                else -> "Tahun Ini"
+                            }
+                            
+                            val exportOrdersList = if (selectedStatusForExport == "Semua Status") {
+                                filteredOrders
+                            } else {
+                                filteredOrders.filter { it.status == selectedStatusForExport }
+                            }
+                            
+                            val exportTotal = exportOrdersList.filter { it.status != "Batal" }.sumOf { it.finalTotal }
+                            
+                            if (exportFormat == "CSV") {
+                                val fileName = "Laporan_Keuangan_${selectedOutlet.replace(" ", "_")}_${periodTitle.replace(" ", "_")}_${selectedStatusForExport.replace(" ", "_")}.csv"
+                                val csvContent = generateFinancialSummaryCsv(selectedOutlet, periodTitle, exportTotal, exportOrdersList)
+                                val success = saveCsvToDownloads(context, csvContent, fileName)
+                                if (success) {
+                                    exportMessage = "Laporan CSV berhasil diunduh!\nNama file: $fileName"
+                                } else {
+                                    exportMessage = "Gagal mengunduh CSV. Pastikan ijin folder aktif."
+                                }
+                            } else {
+                                val fileName = "Laporan_Keuangan_${selectedOutlet.replace(" ", "_")}_${periodTitle.replace(" ", "_")}_${selectedStatusForExport.replace(" ", "_")}.pdf"
+                                val success = saveStylizedPdfToDownloads(
+                                    context = context,
+                                    outlet = selectedOutlet,
+                                    period = periodTitle,
+                                    statusFilter = selectedStatusForExport,
+                                    orders = exportOrdersList,
+                                    totalIncome = exportTotal,
+                                    fileName = fileName
+                                )
+                                if (success) {
+                                    exportMessage = "Laporan PDF berhasil diunduh!\nNama file: $fileName"
+                                } else {
+                                    exportMessage = "Gagal mengunduh PDF. Pastikan ijin folder aktif."
+                                }
+                            }
+                        },
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Text("Unduh Laporan", fontWeight = FontWeight.Bold)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showExportDialog = false }) {
+                        Text("Batal")
+                    }
+                }
+            )
         }
 
         if (exportMessage != null) {
@@ -8464,6 +8563,314 @@ fun saveCsvToDownloads(context: android.content.Context, csvContent: String, fil
             file.writeText(csvContent)
             true
         }
+    } catch (e: Exception) {
+        e.printStackTrace()
+        false
+    }
+}
+
+fun saveStylizedPdfToDownloads(
+    context: android.content.Context,
+    outlet: String,
+    period: String,
+    statusFilter: String,
+    orders: List<com.example.data.model.Order>,
+    totalIncome: Double,
+    fileName: String
+): Boolean {
+    return try {
+        val pdfDocument = android.graphics.pdf.PdfDocument()
+        
+        val titlePaint = android.graphics.Paint().apply {
+            color = android.graphics.Color.rgb(18, 140, 126) // CucianKu Teal
+            textSize = 18f
+            typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
+            isAntiAlias = true
+        }
+        val subTitlePaint = android.graphics.Paint().apply {
+            color = android.graphics.Color.GRAY
+            textSize = 10f
+            isAntiAlias = true
+        }
+        val borderPaint = android.graphics.Paint().apply {
+            color = android.graphics.Color.rgb(220, 220, 220)
+            strokeWidth = 1f
+            style = android.graphics.Paint.Style.STROKE
+        }
+        val headerPaint = android.graphics.Paint().apply {
+            color = android.graphics.Color.BLACK
+            textSize = 10f
+            typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
+            isAntiAlias = true
+        }
+        val headerBgPaint = android.graphics.Paint().apply {
+            color = android.graphics.Color.rgb(240, 245, 245)
+            style = android.graphics.Paint.Style.FILL
+        }
+        val rowPaint = android.graphics.Paint().apply {
+            textSize = 9f
+            color = android.graphics.Color.rgb(60, 60, 60)
+            isAntiAlias = true
+        }
+        val rowBoldPaint = android.graphics.Paint().apply {
+            textSize = 9f
+            color = android.graphics.Color.BLACK
+            typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
+            isAntiAlias = true
+        }
+        
+        val pageWidth = 595
+        val pageHeight = 842
+        
+        var currentPageNumber = 1
+        var pageInfo = android.graphics.pdf.PdfDocument.PageInfo.Builder(pageWidth, pageHeight, currentPageNumber).create()
+        var page = pdfDocument.startPage(pageInfo)
+        var canvas = page.canvas
+        
+        fun drawPageHeader(pageNum: Int) {
+            val accentPaint = android.graphics.Paint().apply {
+                color = android.graphics.Color.rgb(18, 140, 126)
+                style = android.graphics.Paint.Style.FILL
+            }
+            canvas.drawRect(0f, 0f, pageWidth.toFloat(), 15f, accentPaint)
+            
+            if (pageNum == 1) {
+                canvas.drawText("CUCIANKU LAUNDRY", 40f, 45f, titlePaint)
+                canvas.drawText("Laporan Keuangan & Transaksi Pelanggan", 40f, 60f, subTitlePaint)
+                canvas.drawLine(40f, 70f, (pageWidth - 40).toFloat(), 70f, borderPaint)
+                
+                val metaPaint = android.graphics.Paint().apply {
+                    textSize = 9f
+                    color = android.graphics.Color.DKGRAY
+                    isAntiAlias = true
+                }
+                val metaBoldPaint = android.graphics.Paint().apply {
+                    textSize = 9f
+                    color = android.graphics.Color.BLACK
+                    typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
+                    isAntiAlias = true
+                }
+                
+                canvas.drawText("Outlet:", 40f, 90f, metaPaint)
+                canvas.drawText(outlet, 110f, 90f, metaBoldPaint)
+                
+                canvas.drawText("Periode:", 40f, 105f, metaPaint)
+                canvas.drawText(period, 110f, 105f, metaBoldPaint)
+                
+                canvas.drawText("Filter Status:", 40f, 120f, metaPaint)
+                canvas.drawText(statusFilter, 110f, 120f, metaBoldPaint)
+                
+                val sdf = java.text.SimpleDateFormat("dd MMMM yyyy, HH:mm", java.util.Locale("id", "ID"))
+                canvas.drawText("Tanggal Cetak:", 340f, 90f, metaPaint)
+                canvas.drawText(sdf.format(java.util.Date()), 430f, 90f, metaBoldPaint)
+                
+                canvas.drawText("Transaksi:", 340f, 105f, metaPaint)
+                canvas.drawText("${orders.size} Order", 430f, 105f, metaBoldPaint)
+                
+                canvas.drawText("Total Pendapatan:", 340f, 120f, metaPaint)
+                canvas.drawText("Rp ${String.format("%,.0f", totalIncome).replace(",", ".")}", 430f, 120f, metaBoldPaint)
+                
+                canvas.drawLine(40f, 135f, (pageWidth - 40).toFloat(), 135f, borderPaint)
+            } else {
+                canvas.drawText("CUCIANKU LAUNDRY - Laporan Keuangan", 40f, 40f, headerPaint)
+                canvas.drawText("Periode: $period • Outlet: $outlet", 40f, 53f, subTitlePaint)
+                canvas.drawLine(40f, 62f, (pageWidth - 40).toFloat(), 62f, borderPaint)
+            }
+            
+            val pageNumPaint = android.graphics.Paint().apply {
+                textSize = 9f
+                color = android.graphics.Color.GRAY
+                isAntiAlias = true
+            }
+            canvas.drawText("Halaman $pageNum", (pageWidth - 90).toFloat(), 40f, pageNumPaint)
+        }
+        
+        drawPageHeader(currentPageNumber)
+        
+        // Draw stats box on first page
+        val boxPaint = android.graphics.Paint().apply {
+            color = android.graphics.Color.rgb(245, 248, 248)
+            style = android.graphics.Paint.Style.FILL
+            isAntiAlias = true
+        }
+        val boxBorderPaint = android.graphics.Paint().apply {
+            color = android.graphics.Color.rgb(18, 140, 126)
+            strokeWidth = 1f
+            style = android.graphics.Paint.Style.STROKE
+            isAntiAlias = true
+        }
+        
+        canvas.drawRoundRect(40f, 145f, (pageWidth - 40).toFloat(), 200f, 8f, 8f, boxPaint)
+        canvas.drawRoundRect(40f, 145f, (pageWidth - 40).toFloat(), 200f, 8f, 8f, boxBorderPaint)
+        
+        val statsLabelPaint = android.graphics.Paint().apply {
+            color = android.graphics.Color.rgb(100, 100, 100)
+            textSize = 9f
+            isAntiAlias = true
+        }
+        val statsValPaint = android.graphics.Paint().apply {
+            color = android.graphics.Color.rgb(18, 140, 126)
+            textSize = 13f
+            typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
+            isAntiAlias = true
+        }
+        
+        canvas.drawText("TOTAL PENDAPATAN", 60f, 168f, statsLabelPaint)
+        canvas.drawText("Rp ${String.format("%,.0f", totalIncome).replace(",", ".")}", 60f, 188f, statsValPaint)
+        
+        canvas.drawText("TOTAL TRANSAKSI", 250f, 168f, statsLabelPaint)
+        canvas.drawText("${orders.size} Order", 250f, 188f, statsValPaint)
+        
+        canvas.drawText("STATUS FILTER", 410f, 168f, statsLabelPaint)
+        canvas.drawText(statusFilter, 410f, 188f, statsValPaint)
+        
+        var y = 215f
+        
+        fun drawTableHeader() {
+            canvas.drawRect(40f, y, (pageWidth - 40).toFloat(), y + 22f, headerBgPaint)
+            canvas.drawRect(40f, y, (pageWidth - 40).toFloat(), y + 22f, borderPaint)
+            
+            val colY = y + 14f
+            canvas.drawText("Struk", 48f, colY, headerPaint)
+            canvas.drawText("Pelanggan", 125f, colY, headerPaint)
+            canvas.drawText("Layanan", 255f, colY, headerPaint)
+            canvas.drawText("Status", 375f, colY, headerPaint)
+            canvas.drawText("Total", 480f, colY, headerPaint)
+            
+            y += 22f
+        }
+        
+        drawTableHeader()
+        
+        val statusBgPaint = android.graphics.Paint().apply {
+            style = android.graphics.Paint.Style.FILL
+            isAntiAlias = true
+        }
+        val statusTextPaint = android.graphics.Paint().apply {
+            textSize = 8f
+            typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
+            isAntiAlias = true
+        }
+        
+        orders.forEachIndexed { index, order ->
+            if (y > 770f) {
+                pdfDocument.finishPage(page)
+                currentPageNumber++
+                pageInfo = android.graphics.pdf.PdfDocument.PageInfo.Builder(pageWidth, pageHeight, currentPageNumber).create()
+                page = pdfDocument.startPage(pageInfo)
+                canvas = page.canvas
+                
+                drawPageHeader(currentPageNumber)
+                y = 75f
+                drawTableHeader()
+            }
+            
+            if (index % 2 == 1) {
+                val rowBgPaint = android.graphics.Paint().apply {
+                    color = android.graphics.Color.rgb(250, 252, 252)
+                    style = android.graphics.Paint.Style.FILL
+                }
+                canvas.drawRect(40f, y, (pageWidth - 40).toFloat(), y + 20f, rowBgPaint)
+            }
+            canvas.drawLine(40f, y + 20f, (pageWidth - 40).toFloat(), y + 20f, borderPaint)
+            
+            val itemY = y + 13f
+            canvas.drawText("#ORD-${order.id}", 48f, itemY, rowBoldPaint)
+            
+            var custName = order.customerName
+            if (custName.length > 20) {
+                custName = custName.take(18) + ".."
+            }
+            canvas.drawText(custName, 125f, itemY, rowPaint)
+            
+            var serviceInfo = "${order.serviceType} (${order.weightQty})"
+            if (serviceInfo.length > 22) {
+                serviceInfo = serviceInfo.take(20) + ".."
+            }
+            canvas.drawText(serviceInfo, 255f, itemY, rowPaint)
+            
+            // Status pill
+            val status = order.status
+            val (statusBg, statusFg) = when (status) {
+                "Order Masuk" -> Pair(android.graphics.Color.rgb(224, 242, 241), android.graphics.Color.rgb(0, 121, 107))
+                "Dicuci", "Disetrika", "Packing" -> Pair(android.graphics.Color.rgb(227, 242, 253), android.graphics.Color.rgb(21, 101, 192))
+                "Selesai", "Siap Ambil" -> Pair(android.graphics.Color.rgb(232, 245, 233), android.graphics.Color.rgb(46, 125, 50))
+                "Diambil" -> Pair(android.graphics.Color.rgb(243, 229, 245), android.graphics.Color.rgb(123, 31, 162))
+                else -> Pair(android.graphics.Color.rgb(255, 235, 235), android.graphics.Color.rgb(198, 40, 40))
+            }
+            
+            statusBgPaint.color = statusBg
+            statusTextPaint.color = statusFg
+            
+            val pillLeft = 375f
+            val pillTop = y + 3f
+            val pillRight = 445f
+            val pillBottom = y + 17f
+            canvas.drawRoundRect(pillLeft, pillTop, pillRight, pillBottom, 4f, 4f, statusBgPaint)
+            
+            val statusTextWidth = statusTextPaint.measureText(status)
+            val textX = pillLeft + (pillRight - pillLeft - statusTextWidth) / 2
+            canvas.drawText(status, textX, y + 12f, statusTextPaint)
+            
+            val priceStr = "Rp ${String.format("%,.0f", order.finalTotal).replace(",", ".")}"
+            val priceWidth = rowBoldPaint.measureText(priceStr)
+            canvas.drawText(priceStr, (pageWidth - 48).toFloat() - priceWidth, itemY, rowBoldPaint)
+            
+            y += 20f
+        }
+        
+        if (y > 700f) {
+            pdfDocument.finishPage(page)
+            currentPageNumber++
+            pageInfo = android.graphics.pdf.PdfDocument.PageInfo.Builder(pageWidth, pageHeight, currentPageNumber).create()
+            page = pdfDocument.startPage(pageInfo)
+            canvas = page.canvas
+            drawPageHeader(currentPageNumber)
+            y = 75f
+        }
+        
+        y += 15f
+        canvas.drawLine(40f, y, (pageWidth - 40).toFloat(), y, borderPaint)
+        
+        y += 15f
+        val footerInfoPaint = android.graphics.Paint().apply {
+            textSize = 8f
+            color = android.graphics.Color.GRAY
+            isAntiAlias = true
+        }
+        canvas.drawText("* Laporan ini digenerate secara otomatis oleh sistem CucianKu Laundry.", 40f, y, footerInfoPaint)
+        canvas.drawText("Mengetahui,", (pageWidth - 160).toFloat(), y + 15f, rowBoldPaint)
+        canvas.drawText("Manajer / Owner", (pageWidth - 160).toFloat(), y + 60f, rowPaint)
+        canvas.drawLine((pageWidth - 160).toFloat(), y + 65f, (pageWidth - 40).toFloat(), y + 65f, borderPaint)
+        
+        pdfDocument.finishPage(page)
+        
+        val result = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            val resolver = context.contentResolver
+            val contentValues = android.content.ContentValues().apply {
+                put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "application/pdf")
+                put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS)
+            }
+            val uri = resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
+            if (uri != null) {
+                resolver.openOutputStream(uri)?.use { outputStream ->
+                    pdfDocument.writeTo(outputStream)
+                }
+                true
+            } else {
+                false
+            }
+        } else {
+            val downloadsDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+            val file = java.io.File(downloadsDir, fileName)
+            java.io.FileOutputStream(file).use { out ->
+                pdfDocument.writeTo(out)
+            }
+            true
+        }
+        pdfDocument.close()
+        result
     } catch (e: Exception) {
         e.printStackTrace()
         false
