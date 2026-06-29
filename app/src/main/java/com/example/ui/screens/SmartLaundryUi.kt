@@ -2980,11 +2980,23 @@ fun AdminPengaturanLayananSubScreen(viewModel: LaundryViewModel, onBack: () -> U
     
     // For navigation to add service
     var isAddingService by remember { mutableStateOf(false) }
+
+    // For navigation to edit/delete service
+    var selectedServiceToEdit by remember { mutableStateOf<Service?>(null) }
     
     if (isAddingService) {
         AdminTambahLayananSubScreen(
             viewModel = viewModel,
             onBack = { isAddingService = false }
+        )
+        return
+    }
+    
+    if (selectedServiceToEdit != null) {
+        AdminUbahLayananSubScreen(
+            viewModel = viewModel,
+            service = selectedServiceToEdit!!,
+            onBack = { selectedServiceToEdit = null }
         )
         return
     }
@@ -3147,7 +3159,7 @@ fun AdminPengaturanLayananSubScreen(viewModel: LaundryViewModel, onBack: () -> U
                             horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
                             OutlinedButton(
-                                onClick = { /* Edit Service Dialog */ },
+                                onClick = { selectedServiceToEdit = service },
                                 modifier = Modifier.weight(1f),
                                 shape = RoundedCornerShape(12.dp),
                                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
@@ -3364,6 +3376,157 @@ fun AdminTambahLayananSubScreen(viewModel: LaundryViewModel, onBack: () -> Unit)
             shape = RoundedCornerShape(12.dp)
         ) {
             Text("Simpan Layanan", fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AdminUbahLayananSubScreen(viewModel: LaundryViewModel, service: Service, onBack: () -> Unit) {
+    var nameInput by remember { mutableStateOf(service.name) }
+    var selectedCategory by remember { mutableStateOf(service.category) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+    ) {
+        // Header
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onBack, modifier = Modifier.testTag("ubah_layanan_back_button")) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "Kembali",
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            }
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = "Ubah Layanan",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.ExtraBold,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Spacer(modifier = Modifier.weight(1f))
+            IconButton(
+                onClick = {
+                    viewModel.deleteService(service)
+                    onBack()
+                },
+                modifier = Modifier.testTag("hapus_layanan_button")
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Delete,
+                    contentDescription = "Hapus Layanan",
+                    tint = MaterialTheme.colorScheme.error
+                )
+            }
+        }
+
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .weight(1f)
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp)
+        ) {
+            Text("Nama Layanan", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedTextField(
+                value = nameInput,
+                onValueChange = { nameInput = it },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                placeholder = { Text("cth: Cuci + Setrika, Setrika, Bed Cover, Sepatu") },
+                singleLine = true,
+                colors = OutlinedTextFieldDefaults.colors(
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                    focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                    unfocusedBorderColor = Color.Transparent,
+                    focusedBorderColor = Color.Transparent
+                )
+            )
+
+            Spacer(modifier = Modifier.height(24.dp))
+            Text("Tipe Layanan", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
+            Text("Pilih satuan harga yang sesuai", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Options
+            val types = listOf(
+                Triple("Satuan", "Pcs", "Harga per pcs · cocok untuk pakaian, sepatu, tas"),
+                Triple("Kiloan", "Kg", "Harga per kg · cocok untuk cucian umum"),
+                Triple("Meteran", "m²", "Harga per m² · cocok untuk gorden, karpet")
+            )
+            
+            types.forEach { (type, unit, desc) ->
+                val isSelected = selectedCategory == type
+                Card(
+                    onClick = { selectedCategory = type },
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (isSelected) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f) else MaterialTheme.colorScheme.surface
+                    ),
+                    border = BorderStroke(
+                        width = if (isSelected) 2.dp else 1.dp, 
+                        color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                    ),
+                    elevation = CardDefaults.cardElevation(defaultElevation = if (isSelected) 0.dp else 1.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .background(
+                                    color = if (type == "Satuan") Color(0xFFE3F2FD) // Light Blue
+                                            else if (type == "Kiloan") Color(0xFFE8F5E9) // Light Green
+                                            else Color(0xFFF3E5F5), // Light Purple
+                                    shape = CircleShape
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = unit,
+                                color = if (type == "Satuan") Color(0xFF1976D2)
+                                        else if (type == "Kiloan") Color(0xFF388E3C)
+                                        else Color(0xFF7B1FA2),
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Column {
+                            Text(text = type, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                            Text(text = desc, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            }
+        }
+        
+        Button(
+            onClick = { 
+                if (nameInput.isNotBlank()) {
+                    viewModel.updateService(service.copy(name = nameInput, category = selectedCategory))
+                    onBack()
+                }
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+                .height(50.dp),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Text("Simpan Perubahan", fontWeight = FontWeight.Bold)
         }
     }
 }
@@ -3705,6 +3868,20 @@ fun AdminUbahHargaSubScreen(viewModel: LaundryViewModel, service: Service, price
                 fontWeight = FontWeight.ExtraBold,
                 color = MaterialTheme.colorScheme.primary
             )
+            Spacer(modifier = Modifier.weight(1f))
+            IconButton(
+                onClick = {
+                    viewModel.deleteServicePrice(price)
+                    onBack()
+                },
+                modifier = Modifier.testTag("hapus_harga_button")
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Delete,
+                    contentDescription = "Hapus Harga",
+                    tint = MaterialTheme.colorScheme.error
+                )
+            }
         }
 
         Column(
@@ -4668,6 +4845,17 @@ fun CashierDashboardScreen(viewModel: LaundryViewModel) {
     }
 }
 
+fun formatPhoneNumberForWhatsApp(phone: String): String {
+    val clean = phone.replace(Regex("[^0-9]"), "")
+    return if (clean.startsWith("0")) {
+        "62" + clean.substring(1)
+    } else if (clean.startsWith("8")) {
+        "62" + clean
+    } else {
+        clean
+    }
+}
+
 @Composable
 fun OrderQueueCard(order: Order, viewModel: LaundryViewModel, settings: AppSettings?) {
     val currentDisplayStatus = when (order.status) {
@@ -4742,6 +4930,41 @@ fun OrderQueueCard(order: Order, viewModel: LaundryViewModel, settings: AppSetti
             }
 
             Spacer(modifier = Modifier.height(12.dp))
+
+            val context = LocalContext.current
+            OutlinedButton(
+                onClick = {
+                    val formattedPhone = formatPhoneNumberForWhatsApp(order.customerPhone)
+                    val message = when (order.status) {
+                        "Order Masuk" -> "Halo Kak ${order.customerName},\n\nPesanan laundry Anda dengan nomor struk *#ORD-${order.id}* telah diterima dan sedang kami proses.\n\nDetail Layanan:\n- Layanan: ${order.serviceType}\n- Jumlah: ${order.weightQty}\n- Total: Rp ${String.format("%,.0f", order.finalTotal).replace(",", ".")}\n\nTerima kasih telah mempercayakan laundry Anda kepada CucianKu! 🙏"
+                        "Siap Ambil" -> "Halo Kak ${order.customerName},\n\nKabar baik! Cucian Anda dengan nomor struk *#ORD-${order.id}* sudah SELESAI dan SIAP DIAMBIL di outlet kami.\n\nDetail Layanan:\n- Layanan: ${order.serviceType}\n- Total: Rp ${String.format("%,.0f", order.finalTotal).replace(",", ".")}\n\nSilakan datang ke outlet untuk pengambilan. Terima kasih! 😊"
+                        "Diambil" -> "Halo Kak ${order.customerName},\n\nPesanan laundry Anda dengan nomor struk *#ORD-${order.id}* telah selesai diambil.\n\nTerima kasih banyak atas kunjungannya. Semoga puas dengan layanan kami! Kami tunggu kedatangan Anda berikutnya. 🙏✨"
+                        else -> "Halo Kak ${order.customerName},\n\nBerikut informasi pesanan laundry Anda dengan nomor struk *#ORD-${order.id}*.\nStatus terkini: *${order.status}*\n\nTerima kasih! 🙏"
+                    }
+                    val url = "https://api.whatsapp.com/send?phone=$formattedPhone&text=${java.net.URLEncoder.encode(message, "UTF-8")}"
+                    val intent = Intent(Intent.ACTION_VIEW).apply {
+                        data = Uri.parse(url)
+                    }
+                    try {
+                        context.startActivity(intent)
+                    } catch (e: Exception) {
+                        viewModel.pendingWaNotification.value = "Gagal membuka WhatsApp. Pastikan aplikasi WhatsApp terinstal di ponsel Anda."
+                    }
+                },
+                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                shape = RoundedCornerShape(10.dp),
+                border = BorderStroke(1.dp, Color(0xFF25D366)),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF128C7E))
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.Send,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                    tint = Color(0xFF128C7E)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Kirim Notifikasi WhatsApp", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            }
 
             // Action row for moving statuses forward or cancellation
             Row(
@@ -8126,6 +8349,37 @@ Status    : ${order.status}
                         Spacer(modifier = Modifier.width(6.dp))
                         Text("Cetak Struk", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                val context = LocalContext.current
+                Button(
+                    onClick = {
+                        val formattedPhone = formatPhoneNumberForWhatsApp(order.customerPhone)
+                        val message = "Halo Kak ${order.customerName},\n\nBerikut adalah struk transaksi laundry Anda di CucianKu:\n\n$plainTextReceipt"
+                        val url = "https://api.whatsapp.com/send?phone=$formattedPhone&text=${java.net.URLEncoder.encode(message, "UTF-8")}"
+                        val intent = Intent(Intent.ACTION_VIEW).apply {
+                            data = Uri.parse(url)
+                        }
+                        try {
+                            context.startActivity(intent)
+                        } catch (e: Exception) {
+                            viewModel.pendingWaNotification.value = "Gagal membuka WhatsApp. Pastikan aplikasi WhatsApp terinstal di ponsel Anda."
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF25D366)), // WhatsApp green
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.Send,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                        tint = Color.White
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Kirim Struk via WhatsApp", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
                 }
             }
         }
